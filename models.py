@@ -1,7 +1,7 @@
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
 from argon2 import PasswordHasher
-from argon2.exceptions import VerifyMismatchError
+from argon2.exceptions import InvalidHashError, VerificationError
 from datetime import datetime
 
 db = SQLAlchemy()
@@ -9,6 +9,10 @@ db = SQLAlchemy()
 # Inicializar Argon2 Password Hasher
 # Argon2id é a variante recomendada que combina resistência a ataques de tempo e memória
 ph = PasswordHasher()
+
+# Hash descartável usado para gastar o mesmo tempo de CPU de uma verificação
+# real quando o usuário informado não existe. Ver User.consumir_tempo_de_verificacao.
+_HASH_FALSO = ph.hash('hash-descartavel-para-igualar-o-tempo-de-resposta')
 
 # Tabela associativa para relacionamento many-to-many entre User e TaskGroup
 user_taskgroup = db.Table('user_taskgroup',
@@ -43,12 +47,41 @@ class User(UserMixin, db.Model):
         self.password_hash = ph.hash(password)
 
     def check_password(self, password):
-        """Verifica se a senha está correta usando Argon2."""
+        """
+        Verifica se a senha está correta usando Argon2.
+
+        Captura VerificationError (que cobre VerifyMismatchError) e também
+        InvalidHashError — esta última não deriva de VerificationError e é
+        levantada quando o hash armazenado não está no formato Argon2, por
+        exemplo um registro antigo gravado com outro algoritmo. Sem tratá-la
+        o login devolveria erro 500 em vez de recusar a autenticação.
+        """
         try:
             ph.verify(self.password_hash, password)
             return True
-        except VerifyMismatchError:
+        except (VerificationError, InvalidHashError):
             return False
+
+    def precisa_rehash(self):
+        """Indica se o hash foi gerado com parâmetros Argon2 antigos."""
+        try:
+            return ph.check_needs_rehash(self.password_hash)
+        except InvalidHashError:
+            return True
+
+    @staticmethod
+    def consumir_tempo_de_verificacao():
+        """
+        Executa uma verificação Argon2 sobre um hash descartável.
+
+        Usado no login quando o usuário não existe, para que a resposta leve o
+        mesmo tempo de uma tentativa com usuário válido e não seja possível
+        descobrir quais nomes estão cadastrados medindo o tempo de resposta.
+        """
+        try:
+            ph.verify(_HASH_FALSO, 'senha-que-nunca-confere')
+        except (VerificationError, InvalidHashError):
+            pass
 
     def __repr__(self):
         return f'<User {self.username}>'

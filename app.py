@@ -1,5 +1,5 @@
 import os
-from flask import Flask, render_template, request, redirect, url_for, flash
+from flask import Flask, render_template, request, redirect, url_for, flash, session
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from flask_wtf.csrf import CSRFProtect
 from flask_talisman import Talisman
@@ -14,18 +14,38 @@ from collections import defaultdict
 # Carregar variáveis de ambiente
 load_dotenv()
 
+def env_bool(name, default=False):
+    """Lê uma variável de ambiente booleana aceitando true/1/yes/on (sem diferenciar caixa)."""
+    valor = os.getenv(name)
+    if valor is None:
+        return default
+    return valor.strip().lower() in ('true', '1', 'yes', 'on')
+
+
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
+
+# A SECRET_KEY assina os cookies de sessão. Sem ela (ou com um valor
+# conhecido) qualquer pessoa consegue forjar uma sessão e se autenticar como
+# qualquer usuário. Por isso a aplicação recusa iniciar em vez de usar um
+# valor padrão.
+SECRET_KEY = os.getenv('SECRET_KEY')
+if not SECRET_KEY:
+    raise RuntimeError(
+        "SECRET_KEY não definida. Gere uma chave forte e coloque no arquivo .env:\n"
+        "  python3 -c 'import secrets; print(secrets.token_hex(32))'"
+    )
+app.config['SECRET_KEY'] = SECRET_KEY
+
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///tarefas.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Configurações de segurança
-app.config['SESSION_COOKIE_SECURE'] = os.getenv('SESSION_COOKIE_SECURE', 'False') == 'True'  # True em produção com HTTPS
+app.config['SESSION_COOKIE_SECURE'] = env_bool('SESSION_COOKIE_SECURE')  # True em produção com HTTPS
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['PERMANENT_SESSION_LIFETIME'] = 3600  # 1 hora
 app.config['WTF_CSRF_TIME_LIMIT'] = None  # Token CSRF não expira (usa session)
-app.config['WTF_CSRF_SSL_STRICT'] = os.getenv('WTF_CSRF_SSL_STRICT', 'False') == 'True'  # True em produção
+app.config['WTF_CSRF_SSL_STRICT'] = env_bool('WTF_CSRF_SSL_STRICT')  # True em produção
 
 # Configurações do Bootstrap-Flask
 app.config['BOOTSTRAP_SERVE_LOCAL'] = True  # Servir Bootstrap localmente ao invés de CDN
@@ -65,6 +85,16 @@ def load_user(user_id):
     return User.query.get(int(user_id))
 
 
+@app.before_request
+def tornar_sessao_permanente():
+    """
+    PERMANENT_SESSION_LIFETIME só se aplica a sessões marcadas como
+    permanentes. Sem isto o cookie de sessão dura até o navegador fechar e o
+    limite de 1 hora configurado nunca entra em vigor.
+    """
+    session.permanent = True
+
+
 # ============= DECORADORES =============
 
 def admin_required(f):
@@ -89,7 +119,17 @@ def login():
     if form.validate_on_submit():
         user = User.query.filter_by(username=form.username.data).first()
 
+        if user is None:
+            # Consome o mesmo tempo de um Argon2 real para que a resposta não
+            # revele se o nome de usuário existe (enumeração por timing).
+            User.consumir_tempo_de_verificacao()
+
         if user and user.check_password(form.password.data):
+            # Se os parâmetros do Argon2 mudaram desde o cadastro, regrava o
+            # hash com os parâmetros atuais aproveitando a senha em claro.
+            if user.precisa_rehash():
+                user.set_password(form.password.data)
+                db.session.commit()
             login_user(user)
             next_page = request.args.get('next')
             return redirect(next_page) if next_page else redirect(url_for('index'))
@@ -623,4 +663,9 @@ def init_db():
 
 if __name__ == '__main__':
     init_db()
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    # O debugger do Werkzeug executa código arbitrário através do navegador,
+    # portanto só é habilitado fora de produção. O bind padrão é 127.0.0.1
+    # para não expor o servidor de desenvolvimento na rede; use
+    # FLASK_RUN_HOST=0.0.0.0 se precisar acessar de outra máquina.
+    modo_debug = os.getenv('FLASK_ENV', 'development') != 'production'
+    app.run(host=os.getenv('FLASK_RUN_HOST', '127.0.0.1'), port=5000, debug=modo_debug)
