@@ -525,7 +525,17 @@ def admin_dashboard():
              .filter_by(is_admin=False)
              .filter(User.id.in_(usuarios_visiveis_para(current_user)))
              .all())
-    return render_template('admin/dashboard.html', groups=groups, users=users)
+
+    # Em quais grupos deste administrador cada usuário está. Um usuário pode
+    # pertencer a vários grupos ao mesmo tempo; sem isto no painel não havia
+    # como saber a quais.
+    grupos_por_usuario = defaultdict(list)
+    for grupo in groups:
+        for membro in grupo.members:
+            grupos_por_usuario[membro.id].append(grupo.name)
+
+    return render_template('admin/dashboard.html', groups=groups, users=users,
+                           grupos_por_usuario=grupos_por_usuario)
 
 
 @app.route('/admin/groups/create', methods=['GET', 'POST'])

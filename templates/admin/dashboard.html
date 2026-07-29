@@ -63,13 +63,24 @@
                 <thead class="table-light">
                     <tr>
                         <th>Usuário</th>
-                        <th>Criado em</th>
+                        <th>Grupos</th>
+                        <th style="width: 160px;">Criado em</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for user in users %}
                     <tr>
                         <td>{{ user.username }}</td>
+                        <td>
+                            {% set grupos = grupos_por_usuario.get(user.id, []) %}
+                            {% if grupos %}
+                                {% for nome in grupos %}
+                                <span class="badge bg-secondary">{{ nome }}</span>
+                                {% endfor %}
+                            {% else %}
+                                <span class="text-muted">Nenhum grupo</span>
+                            {% endif %}
+                        </td>
                         <td>{{ user.created_at.strftime('%d/%m/%Y às %H:%M') }}</td>
                     </tr>
                     {% endfor %}
