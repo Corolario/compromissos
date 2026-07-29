@@ -4,6 +4,9 @@ from flask_login import LoginManager, login_user, logout_user, login_required, c
 from flask_wtf.csrf import CSRFProtect
 from flask_talisman import Talisman
 from flask_bootstrap import Bootstrap5
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from werkzeug.middleware.proxy_fix import ProxyFix
 from dotenv import load_dotenv
 from functools import wraps
 from models import db, User, Tarefa, TaskGroup, Note
@@ -50,12 +53,53 @@ app.config['WTF_CSRF_SSL_STRICT'] = env_bool('WTF_CSRF_SSL_STRICT')  # True em p
 # Configurações do Bootstrap-Flask
 app.config['BOOTSTRAP_SERVE_LOCAL'] = True  # Servir Bootstrap localmente ao invés de CDN
 
+# Confiança em proxies reversos
+#
+# Atrás de um proxy (nginx), request.remote_addr é o endereço do próprio proxy
+# e o IP real do visitante vem no cabeçalho X-Forwarded-For. Sem tratar isso, o
+# limite de tentativas de login contaria todo mundo em um balde só.
+#
+# O padrão é 0 de propósito: confiar no cabeçalho sem proxy na frente permitiria
+# a qualquer pessoa forjar X-Forwarded-For e escapar do limite trocando de IP a
+# cada tentativa. Defina TRUSTED_PROXY_COUNT=1 apenas quando houver de fato um
+# proxy repassando o cabeçalho.
+PROXIES_CONFIAVEIS = int(os.getenv('TRUSTED_PROXY_COUNT', '0'))
+if PROXIES_CONFIAVEIS > 0:
+    app.wsgi_app = ProxyFix(app.wsgi_app,
+                            x_for=PROXIES_CONFIAVEIS,
+                            x_proto=PROXIES_CONFIAVEIS,
+                            x_host=PROXIES_CONFIAVEIS)
+
 # Inicializar extensões
 db.init_app(app)
 bootstrap = Bootstrap5(app)
 
 # Proteção CSRF
 csrf = CSRFProtect(app)
+
+# Limite de tentativas de login
+#
+# O armazenamento padrão é em memória, que é local a cada processo. Com o
+# gunicorn rodando 4 workers, cada um mantém a própria contagem e o limite
+# efetivo fica multiplicado pelo número de workers. Continua sendo muito melhor
+# que nada, mas para um limite exato configure RATELIMIT_STORAGE_URI apontando
+# para um Redis compartilhado.
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    storage_uri=os.getenv('RATELIMIT_STORAGE_URI', 'memory://'),
+    strategy='fixed-window',
+)
+
+
+def login_falhou(resposta):
+    """
+    Só desconta do limite quando a tentativa falha.
+
+    Um login bem-sucedido responde com redirecionamento; assim quem acerta a
+    senha não gasta cota, e quem erra é quem vai sendo contido.
+    """
+    return resposta.status_code != 302
 
 # Headers de segurança com Flask-Talisman (apenas em produção)
 if os.getenv('FLASK_ENV') == 'production':
@@ -83,6 +127,14 @@ login_manager.session_protection = 'strong'  # Proteção adicional de sessão
 @login_manager.user_loader
 def load_user(user_id):
     return User.query.get(int(user_id))
+
+
+@app.errorhandler(429)
+def limite_de_tentativas_excedido(erro):
+    """Mostra o limite estourado na própria tela de login, com o visual do site."""
+    flash(getattr(erro, 'description', None)
+          or 'Muitas tentativas. Aguarde alguns minutos e tente novamente.', 'danger')
+    return render_template('login.html', form=LoginForm()), 429
 
 
 @app.before_request
@@ -124,6 +176,10 @@ def admin_required(f):
 # ============= ROTAS DE AUTENTICAÇÃO =============
 
 @app.route('/login', methods=['GET', 'POST'])
+@limiter.limit('5 per minute; 40 per hour',
+               methods=['POST'],
+               deduct_when=login_falhou,
+               error_message='Muitas tentativas de login. Aguarde alguns minutos e tente novamente.')
 def login():
     if current_user.is_authenticated:
         return redirect(url_for('index'))
