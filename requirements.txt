@@ -1,17 +1,41 @@
+# =============================================================
+# Dependências do projeto — versões fixadas (lock reprodutível)
+# Gerado e validado no Python 3.13 (mesma versão da imagem Docker).
+# Para atualizar: alterar as versões diretas abaixo, recriar o
+# ambiente e regerar os transitivos com `pip freeze`.
+# =============================================================
+
+# ----- Dependências diretas -----
+
 # Framework Web
-Flask==3.1.0
+Flask==3.1.3
 Flask-Login==0.6.3
 Flask-SQLAlchemy==3.1.1
 Bootstrap-Flask==2.5.0
 
 # Segurança
-Werkzeug==3.1.3
-argon2-cffi==23.1.0  # Hashing de senhas seguro (vencedor Password Hashing Competition)
-Flask-WTF==1.2.2  # Proteção CSRF e validação de formulários
+Werkzeug==3.1.8
+argon2-cffi==25.1.0  # Hashing de senhas seguro (vencedor Password Hashing Competition)
+Flask-WTF==1.3.0  # Proteção CSRF e validação de formulários
 Flask-Talisman==1.1.0  # Headers de segurança HTTP (HTTPS, CSP, etc.)
 
 # Utilitários
-python-dotenv==1.0.1
+python-dotenv==1.2.2
 
 # Servidor de Produção
-gunicorn==23.0.0
+gunicorn==26.0.0
+
+# ----- Dependências transitivas (fixadas para builds reprodutíveis) -----
+argon2-cffi-bindings==25.1.0
+blinker==1.9.0
+cffi==2.1.0
+click==8.4.2
+greenlet==3.5.4
+itsdangerous==2.2.0
+Jinja2==3.1.6
+MarkupSafe==3.0.3
+packaging==26.2
+pycparser==3.0
+SQLAlchemy==2.0.51
+typing_extensions==4.16.0
+WTForms==3.2.2

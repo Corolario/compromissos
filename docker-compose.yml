@@ -10,11 +10,20 @@ services:
       # Persistir banco de dados
       - ./data:/app/data
     environment:
-      - SECRET_KEY=${SECRET_KEY:-change-this-secret-key-in-production}
+      # Sem valor padrão de propósito: uma SECRET_KEY conhecida permite forjar
+      # sessões e entrar como qualquer usuário. O compose falha se não estiver
+      # definida no .env.
+      - "SECRET_KEY=${SECRET_KEY:?defina SECRET_KEY no arquivo .env - gere com python3 -c 'import secrets; print(secrets.token_hex(32))'}"
       - DATABASE_URL=sqlite:////app/data/tarefas.db
-      - FLASK_ENV=production
+      - FLASK_ENV=${FLASK_ENV:-production}
+      # Em produção o Flask-Talisman já força HTTPS, então os cookies e a
+      # validação de origem do CSRF assumem TLS. Ajuste no .env apenas se
+      # estiver rodando sem HTTPS.
+      - SESSION_COOKIE_SECURE=${SESSION_COOKIE_SECURE:-True}
+      - WTF_CSRF_SSL_STRICT=${WTF_CSRF_SSL_STRICT:-True}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/login"]
+      # A imagem python:slim não traz curl; usa-se o próprio Python.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/login')"]
       interval: 30s
       timeout: 10s
       retries: 3

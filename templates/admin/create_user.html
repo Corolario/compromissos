@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from 'bootstrap5/form.html' import render_field %}
 
 {% block title %}Criar Usuário{% endblock %}
 
@@ -15,20 +16,9 @@
             <div class="card-body">
                 <form method="POST">
                     {{ form.hidden_tag() }}
-                    <div class="mb-3">
-                        {{ form.username.label(class="form-label") }}
-                        {{ form.username(class="form-control", placeholder="Digite o nome de usuário", autofocus=True) }}
-                    </div>
-
-                    <div class="mb-3">
-                        {{ form.password.label(class="form-label") }}
-                        {{ form.password(class="form-control", placeholder="Mínimo 6 caracteres") }}
-                    </div>
-
-                    <div class="mb-3">
-                        {{ form.confirm_password.label(class="form-label") }}
-                        {{ form.confirm_password(class="form-control", placeholder="Digite a senha novamente") }}
-                    </div>
+                    {{ render_field(form.username, placeholder="Digite o nome de usuário", autofocus=True) }}
+                    {{ render_field(form.password, placeholder="Mínimo 6 caracteres") }}
+                    {{ render_field(form.confirm_password, placeholder="Digite a senha novamente") }}
 
                     <button type="submit" class="btn btn-success w-100">Criar Usuário</button>
                 </form>

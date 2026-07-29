@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from 'bootstrap5/form.html' import render_field %}
 
 {% block title %}Login - Gerenciador de Compromissos{% endblock %}
 
@@ -11,15 +12,8 @@
 
         <form method="POST" action="{{ url_for('login') }}">
             {{ form.hidden_tag() }}
-            <div class="mb-3">
-                {{ form.username.label(class="form-label") }}
-                {{ form.username(class="form-control", autofocus=True) }}
-            </div>
-
-            <div class="mb-3">
-                {{ form.password.label(class="form-label") }}
-                {{ form.password(class="form-control") }}
-            </div>
+            {{ render_field(form.username, autofocus=True) }}
+            {{ render_field(form.password) }}
 
             <button type="submit" class="btn btn-primary w-100">Entrar</button>
         </form>

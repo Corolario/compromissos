@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from 'bootstrap5/form.html' import render_field %}
 
 {% block title %}Editar Grupo{% endblock %}
 
@@ -15,15 +16,8 @@
             <div class="card-body">
                 <form method="POST">
                     {{ form.hidden_tag() }}
-                    <div class="mb-3">
-                        {{ form.name.label(class="form-label") }}
-                        {{ form.name(class="form-control", autofocus=True) }}
-                    </div>
-
-                    <div class="mb-3">
-                        {{ form.description.label(class="form-label") }}
-                        {{ form.description(class="form-control", rows="4") }}
-                    </div>
+                    {{ render_field(form.name, autofocus=True) }}
+                    {{ render_field(form.description, rows="4") }}
 
                     <div class="d-flex gap-2">
                         <button type="submit" class="btn btn-warning flex-fill">Salvar Alterações</button>

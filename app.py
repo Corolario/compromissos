@@ -1,5 +1,5 @@
 import os
-from flask import Flask, render_template, request, redirect, url_for, flash
+from flask import Flask, render_template, request, redirect, url_for, flash, session
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from flask_wtf.csrf import CSRFProtect
 from flask_talisman import Talisman
@@ -14,18 +14,38 @@ from collections import defaultdict
 # Carregar variáveis de ambiente
 load_dotenv()
 
+def env_bool(name, default=False):
+    """Lê uma variável de ambiente booleana aceitando true/1/yes/on (sem diferenciar caixa)."""
+    valor = os.getenv(name)
+    if valor is None:
+        return default
+    return valor.strip().lower() in ('true', '1', 'yes', 'on')
+
+
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY')
+
+# A SECRET_KEY assina os cookies de sessão. Sem ela (ou com um valor
+# conhecido) qualquer pessoa consegue forjar uma sessão e se autenticar como
+# qualquer usuário. Por isso a aplicação recusa iniciar em vez de usar um
+# valor padrão.
+SECRET_KEY = os.getenv('SECRET_KEY')
+if not SECRET_KEY:
+    raise RuntimeError(
+        "SECRET_KEY não definida. Gere uma chave forte e coloque no arquivo .env:\n"
+        "  python3 -c 'import secrets; print(secrets.token_hex(32))'"
+    )
+app.config['SECRET_KEY'] = SECRET_KEY
+
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///tarefas.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Configurações de segurança
-app.config['SESSION_COOKIE_SECURE'] = os.getenv('SESSION_COOKIE_SECURE', 'False') == 'True'  # True em produção com HTTPS
+app.config['SESSION_COOKIE_SECURE'] = env_bool('SESSION_COOKIE_SECURE')  # True em produção com HTTPS
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['PERMANENT_SESSION_LIFETIME'] = 3600  # 1 hora
 app.config['WTF_CSRF_TIME_LIMIT'] = None  # Token CSRF não expira (usa session)
-app.config['WTF_CSRF_SSL_STRICT'] = os.getenv('WTF_CSRF_SSL_STRICT', 'False') == 'True'  # True em produção
+app.config['WTF_CSRF_SSL_STRICT'] = env_bool('WTF_CSRF_SSL_STRICT')  # True em produção
 
 # Configurações do Bootstrap-Flask
 app.config['BOOTSTRAP_SERVE_LOCAL'] = True  # Servir Bootstrap localmente ao invés de CDN
@@ -65,7 +85,31 @@ def load_user(user_id):
     return User.query.get(int(user_id))
 
 
+@app.before_request
+def tornar_sessao_permanente():
+    """
+    PERMANENT_SESSION_LIFETIME só se aplica a sessões marcadas como
+    permanentes. Sem isto o cookie de sessão dura até o navegador fechar e o
+    limite de 1 hora configurado nunca entra em vigor.
+    """
+    session.permanent = True
+
+
 # ============= DECORADORES =============
+
+def usuarios_visiveis_para(admin):
+    """
+    IDs dos usuários comuns que um administrador pode ver e gerenciar.
+
+    São os que ele mesmo cadastrou pela interface web e os que já pertencem a
+    algum grupo administrado por ele. Sem esse recorte, um administrador
+    enxergaria e poderia recrutar os usuários de todos os outros.
+    """
+    ids = {u.id for u in User.query.filter_by(created_by_id=admin.id, is_admin=False)}
+    for grupo in TaskGroup.query.filter_by(admin_id=admin.id):
+        ids.update(membro.id for membro in grupo.members)
+    return ids
+
 
 def admin_required(f):
     @wraps(f)
@@ -89,7 +133,17 @@ def login():
     if form.validate_on_submit():
         user = User.query.filter_by(username=form.username.data).first()
 
+        if user is None:
+            # Consome o mesmo tempo de um Argon2 real para que a resposta não
+            # revele se o nome de usuário existe (enumeração por timing).
+            User.consumir_tempo_de_verificacao()
+
         if user and user.check_password(form.password.data):
+            # Se os parâmetros do Argon2 mudaram desde o cadastro, regrava o
+            # hash com os parâmetros atuais aproveitando a senha em claro.
+            if user.precisa_rehash():
+                user.set_password(form.password.data)
+                db.session.commit()
             login_user(user)
             next_page = request.args.get('next')
             return redirect(next_page) if next_page else redirect(url_for('index'))
@@ -232,14 +286,14 @@ def editar(id):
     tarefa = Tarefa.query.get_or_404(id)
 
     # Verificar permissões
-    # Admin pode editar qualquer tarefa do grupo
-    # Usuário comum só pode editar suas próprias tarefas
+    # O administrador do grupo pode editar qualquer tarefa dele
+    # Os demais membros só podem editar suas próprias tarefas
     task_group = tarefa.task_group
     if task_group not in current_user.task_groups:
         flash('Você não tem permissão para editar esta tarefa.', 'danger')
         return redirect(url_for('index'))
 
-    if not current_user.is_admin and tarefa.user_id != current_user.id:
+    if not tarefa.pode_editar(current_user):
         flash('Você não tem permissão para editar esta tarefa.', 'danger')
         return redirect(url_for('index'))
 
@@ -277,14 +331,14 @@ def deletar(id):
     tarefa = Tarefa.query.get_or_404(id)
 
     # Verificar permissões
-    # Admin pode deletar qualquer tarefa do grupo
-    # Usuário comum só pode deletar suas próprias tarefas
+    # O administrador do grupo pode deletar qualquer tarefa dele
+    # Os demais membros só podem deletar suas próprias tarefas
     task_group = tarefa.task_group
     if task_group not in current_user.task_groups:
         flash('Você não tem permissão para deletar esta tarefa.', 'danger')
         return redirect(url_for('index'))
 
-    if not current_user.is_admin and tarefa.user_id != current_user.id:
+    if not tarefa.pode_editar(current_user):
         flash('Você não tem permissão para deletar esta tarefa.', 'danger')
         return redirect(url_for('index'))
 
@@ -397,20 +451,21 @@ def criar_nota():
 @app.route('/notas/<int:id>/atualizar', methods=['POST'])
 @login_required
 def atualizar_nota(id):
-    """Atualizar conteúdo da nota - apenas autor ou admin"""
+    """Atualizar conteúdo da nota - apenas o autor ou o administrador do grupo"""
     note = Note.query.get_or_404(id)
 
     # Verificar se pertence ao grupo
     if note.task_group not in current_user.task_groups:
         return {'success': False, 'message': 'Você não tem permissão para editar esta nota.'}, 403
 
-    # Verificar se é autor ou admin
-    if note.user_id != current_user.id and not current_user.is_admin:
-        return {'success': False, 'message': 'Apenas o autor ou um administrador podem editar esta nota.'}, 403
+    # Verificar se é o autor ou o administrador do grupo
+    if not note.pode_editar(current_user):
+        return {'success': False,
+                'message': 'Apenas o autor ou o administrador do grupo podem editar esta nota.'}, 403
 
-    # Autor ou admin podem alterar o grupo
+    # Quem pode editar também pode mover a nota para outro dos seus grupos
     task_group_id = request.form.get('task_group_id', type=int)
-    if task_group_id and (note.user_id == current_user.id or current_user.is_admin):
+    if task_group_id:
         # Verificar se o usuário pertence ao novo grupo
         new_group = TaskGroup.query.get(task_group_id)
         if new_group and new_group in current_user.task_groups:
@@ -434,7 +489,7 @@ def atualizar_nota(id):
 @app.route('/notas/<int:id>/deletar', methods=['POST'])
 @login_required
 def deletar_nota(id):
-    """Deletar nota - autor ou admin podem deletar"""
+    """Deletar nota - o autor ou o administrador do grupo podem deletar"""
     note = Note.query.get_or_404(id)
 
     task_group = note.task_group
@@ -442,9 +497,9 @@ def deletar_nota(id):
         flash('Você não tem permissão para deletar esta nota.', 'danger')
         return redirect(url_for('notas'))
 
-    # Verificar permissões - autor ou admin podem deletar
-    if note.user_id != current_user.id and not current_user.is_admin:
-        flash('Apenas o criador da nota ou um administrador podem deletá-la.', 'danger')
+    # Verificar permissões - o autor ou o administrador do grupo podem deletar
+    if not note.pode_editar(current_user):
+        flash('Apenas o criador da nota ou o administrador do grupo podem deletá-la.', 'danger')
         return redirect(url_for('notas'))
 
     group_id = note.task_group_id
@@ -462,8 +517,25 @@ def deletar_nota(id):
 def admin_dashboard():
     """Dashboard de administração"""
     groups = TaskGroup.query.filter_by(admin_id=current_user.id).all()
-    users = User.query.filter_by(is_admin=False).all()
-    return render_template('admin/dashboard.html', groups=groups, users=users)
+
+    # Mostra apenas os usuários comuns que já são membros de algum grupo deste
+    # administrador, mais os que ele mesmo cadastrou. Listar todos os usuários
+    # do sistema expunha os usuários de outros administradores.
+    users = (User.query
+             .filter_by(is_admin=False)
+             .filter(User.id.in_(usuarios_visiveis_para(current_user)))
+             .all())
+
+    # Em quais grupos deste administrador cada usuário está. Um usuário pode
+    # pertencer a vários grupos ao mesmo tempo; sem isto no painel não havia
+    # como saber a quais.
+    grupos_por_usuario = defaultdict(list)
+    for grupo in groups:
+        for membro in grupo.members:
+            grupos_por_usuario[membro.id].append(grupo.name)
+
+    return render_template('admin/dashboard.html', groups=groups, users=users,
+                           grupos_por_usuario=grupos_por_usuario)
 
 
 @app.route('/admin/groups/create', methods=['GET', 'POST'])
@@ -550,9 +622,12 @@ def admin_group_members(id):
 
     form = ManageMemberForm()
 
-    # Listar membros atuais e usuários disponíveis
+    # Listar membros atuais e usuários disponíveis. O administrador só pode
+    # recrutar entre os usuários que ele gerencia; ele próprio sempre aparece,
+    # já que precisa ser membro do grupo para enxergar o conteúdo.
     current_members = group.members.all()
-    all_users = User.query.all()  # Incluir todos os usuários, inclusive admins
+    ids_recrutaveis = usuarios_visiveis_para(current_user) | {current_user.id}
+    all_users = User.query.filter(User.id.in_(ids_recrutaveis)).all()
 
     if request.method == 'POST':
         # Preencher choices dinamicamente antes da validação
@@ -602,7 +677,8 @@ def admin_create_user():
     form = CreateUserForm()
 
     if form.validate_on_submit():
-        user = User(username=form.username.data, is_admin=False)
+        user = User(username=form.username.data, is_admin=False,
+                    created_by_id=current_user.id)
         user.set_password(form.password.data)
         db.session.add(user)
         db.session.commit()
@@ -623,4 +699,9 @@ def init_db():
 
 if __name__ == '__main__':
     init_db()
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    # O debugger do Werkzeug executa código arbitrário através do navegador,
+    # portanto só é habilitado fora de produção. O bind padrão é 127.0.0.1
+    # para não expor o servidor de desenvolvimento na rede; use
+    # FLASK_RUN_HOST=0.0.0.0 se precisar acessar de outra máquina.
+    modo_debug = os.getenv('FLASK_ENV', 'development') != 'production'
+    app.run(host=os.getenv('FLASK_RUN_HOST', '127.0.0.1'), port=5000, debug=modo_debug)
