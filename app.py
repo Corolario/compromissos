@@ -77,6 +77,33 @@ bootstrap = Bootstrap5(app)
 # Proteção CSRF
 csrf = CSRFProtect(app)
 
+# De onde vem o endereço do visitante
+#
+# Atrás de Cloudflare Tunnel, nginx ou qualquer proxy, todas as requisições
+# chegam do mesmo endereço local e o IP real do visitante vem em um cabeçalho.
+# Sem ler esse cabeçalho o limite de tentativas vira um balde único: bastaria
+# um atacante errar cinco vezes para trancar a aplicação para todo mundo.
+#
+# Cloudflare Tunnel : CLIENT_IP_HEADER=CF-Connecting-IP
+# nginx             : CLIENT_IP_HEADER=X-Forwarded-For
+#
+# Só configure quando a aplicação for de fato inalcançável por fora do proxy.
+# Se a porta puder ser acessada diretamente, qualquer pessoa forja o cabeçalho
+# e escapa do limite trocando de endereço a cada tentativa.
+CABECALHO_IP_CLIENTE = os.getenv('CLIENT_IP_HEADER', '').strip()
+
+
+def identificar_visitante():
+    """Endereço usado para contar as tentativas de login de cada visitante."""
+    if CABECALHO_IP_CLIENTE:
+        valor = request.headers.get(CABECALHO_IP_CLIENTE)
+        if valor:
+            # X-Forwarded-For chega como uma cadeia "cliente, proxy1, proxy2";
+            # o primeiro item é quem originou a requisição.
+            return valor.split(',')[0].strip()
+    return get_remote_address()
+
+
 # Limite de tentativas de login
 #
 # O armazenamento padrão é em memória, que é local a cada processo. Com o
@@ -85,7 +112,7 @@ csrf = CSRFProtect(app)
 # que nada, mas para um limite exato configure RATELIMIT_STORAGE_URI apontando
 # para um Redis compartilhado.
 limiter = Limiter(
-    get_remote_address,
+    identificar_visitante,
     app=app,
     storage_uri=os.getenv('RATELIMIT_STORAGE_URI', 'memory://'),
     strategy='fixed-window',

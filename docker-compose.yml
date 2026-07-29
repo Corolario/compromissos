@@ -21,9 +21,15 @@ services:
       # estiver rodando sem HTTPS.
       - SESSION_COOKIE_SECURE=${SESSION_COOKIE_SECURE:-True}
       - WTF_CSRF_SSL_STRICT=${WTF_CSRF_SSL_STRICT:-True}
-      # Quantos proxies reversos existem na frente da aplicação. Necessário
-      # para que o limite de tentativas de login enxergue o IP real do
-      # visitante. Deixe 0 se a porta 5000 for acessada diretamente.
+      # Cabeçalho que traz o IP real do visitante, quando há proxy na frente.
+      # Sem isto o limite de tentativas de login conta todo mundo junto e um
+      # atacante tranca a aplicação inteira.
+      #   Cloudflare Tunnel : CF-Connecting-IP
+      #   nginx             : X-Forwarded-For
+      - CLIENT_IP_HEADER=${CLIENT_IP_HEADER:-}
+      # Quantos proxies reversos existem na frente da aplicação. Afeta o
+      # esquema e o host que a aplicação enxerga. Deixe 0 com Cloudflare
+      # Tunnel: o cloudflared já envia X-Forwarded-Proto, que basta.
       - TRUSTED_PROXY_COUNT=${TRUSTED_PROXY_COUNT:-0}
       # Armazenamento do contador de tentativas. Em memória cada worker conta
       # separadamente; aponte para um Redis se quiser um limite exato.
