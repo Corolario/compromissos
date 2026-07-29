@@ -38,6 +38,9 @@ services:
       - LOGIN_RATE_LIMIT=${LOGIN_RATE_LIMIT:-3 per minute; 10 per hour; 25 per day}
       # Processos do gunicorn. Mantenha baixo por causa do SQLite.
       - GUNICORN_WORKERS=${GUNICORN_WORKERS:-2}
+      # Fuso horário do contêiner. Os horários são gravados e exibidos neste
+      # fuso, sem conversão, então é o que aparece na tela.
+      - TZ=${TZ:-America/Sao_Paulo}
     healthcheck:
       # A imagem python:slim não traz curl; usa-se o próprio Python.
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/login')"]

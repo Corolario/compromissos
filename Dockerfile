@@ -1,6 +1,19 @@
 # Usar imagem oficial do Python
 FROM python:3.13-slim
 
+# Fuso horário do contêiner
+#
+# A aplicação grava e exibe os horários no fuso do sistema, então este valor
+# determina o que aparece na tela. A imagem slim não traz a base de fusos: sem
+# instalar o tzdata, definir TZ não produz efeito algum e tudo continua em UTC,
+# silenciosamente. Ajuste com a variável TZ no .env.
+ENV TZ=America/Sao_Paulo
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tzdata \
+    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
+    && echo $TZ > /etc/timezone \
+    && rm -rf /var/lib/apt/lists/*
+
 # Definir diretório de trabalho
 WORKDIR /app
 
