@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 from functools import wraps
 from models import db, User, Tarefa, TaskGroup, Note
 from forms import (LoginForm, CreateUserForm, TaskForm, EditTaskForm,
-                   TaskGroupForm, DeleteForm, ManageMemberForm)
+                   TaskGroupForm, DeleteForm, ManageMemberForm, NoteForm)
 from collections import defaultdict
 
 # Carregar variáveis de ambiente
@@ -537,13 +537,15 @@ def notas():
 @login_required
 def criar_nota():
     """Criar nova nota"""
-    title = request.form.get('title', '').strip()
-    task_group_id = request.form.get('task_group_id', type=int)
+    form = NoteForm()
 
-    if not title:
-        flash('O título da nota não pode estar vazio.', 'danger')
+    if not form.validate_on_submit():
+        for erros in form.errors.values():
+            for erro in erros:
+                flash(erro, 'danger')
         return redirect(url_for('notas'))
 
+    task_group_id = request.form.get('task_group_id', type=int)
     if not task_group_id:
         flash('Você deve selecionar um grupo.', 'danger')
         return redirect(url_for('notas'))
@@ -555,7 +557,7 @@ def criar_nota():
         return redirect(url_for('notas'))
 
     note = Note(
-        title=title,
+        title=form.title.data.strip(),
         content='',
         user_id=current_user.id,
         task_group_id=task_group_id
@@ -582,6 +584,14 @@ def atualizar_nota(id):
         return {'success': False,
                 'message': 'Apenas o autor ou o administrador do grupo podem editar esta nota.'}, 403
 
+    # A gravação automática dispara a cada pausa na digitação, então os limites
+    # de tamanho são verificados aqui antes de tocar no banco. A resposta é JSON
+    # porque quem chama é o autosave da tela de anotações.
+    form = NoteForm()
+    if not form.validate_on_submit():
+        primeiro_erro = next(iter(form.errors.values()))[0]
+        return {'success': False, 'message': primeiro_erro}, 400
+
     # Quem pode editar também pode mover a nota para outro dos seus grupos
     task_group_id = request.form.get('task_group_id', type=int)
     if task_group_id:
@@ -590,12 +600,8 @@ def atualizar_nota(id):
         if new_group and new_group in current_user.task_groups:
             note.task_group_id = task_group_id
 
-    content = request.form.get('content', '')
-    title = request.form.get('title', '').strip()
-
-    if title:
-        note.title = title
-    note.content = content
+    note.title = form.title.data.strip()
+    note.content = form.content.data or ''
     db.session.commit()
 
     return {
@@ -609,6 +615,12 @@ def atualizar_nota(id):
 @login_required
 def deletar_nota(id):
     """Deletar nota - o autor ou o administrador do grupo podem deletar"""
+    form = DeleteForm()
+
+    if not form.validate_on_submit():
+        flash('Token CSRF inválido.', 'danger')
+        return redirect(url_for('notas'))
+
     note = Note.query.get_or_404(id)
 
     task_group = note.task_group

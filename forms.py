@@ -77,6 +77,30 @@ class TaskGroupForm(FlaskForm):
     ])
 
 
+# Tamanho máximo do texto de uma anotação. A coluna é TEXT e não impõe limite
+# próprio, então sem isto uma única requisição poderia gravar megabytes.
+LIMITE_CONTEUDO_NOTA = 50000
+
+# Acompanha db.String(200) da coluna Note.title. O SQLite não recusa valores
+# maiores que o declarado, mas o PostgreSQL recusa — sem validar aqui, o mesmo
+# título passaria em um banco e derrubaria a requisição no outro.
+LIMITE_TITULO_NOTA = 200
+
+
+class NoteForm(FlaskForm):
+    """Validação dos campos de uma anotação, na criação e na gravação."""
+    title = StringField('Título', validators=[
+        DataRequired(message='O título da anotação é obrigatório.'),
+        Length(max=LIMITE_TITULO_NOTA,
+               message=f'O título deve ter no máximo {LIMITE_TITULO_NOTA} caracteres.')
+    ])
+    content = TextAreaField('Conteúdo', validators=[
+        Length(max=LIMITE_CONTEUDO_NOTA,
+               message=f'A anotação passou do limite de '
+                       f'{LIMITE_CONTEUDO_NOTA:,}'.replace(',', '.') + ' caracteres.')
+    ])
+
+
 class DeleteForm(FlaskForm):
     """Formulário simples para operações de delete (apenas CSRF)"""
     pass

@@ -149,6 +149,14 @@
         display: block;
     }
 
+    .save-indicator.erro {
+        background: #f8d7da;
+        color: #842029;
+        display: block;
+        max-width: 320px;
+        text-align: right;
+    }
+
     /* Botão voltar — oculto no desktop */
     .mobile-back-btn {
         display: none;
@@ -217,8 +225,13 @@
             text-align: center;
         }
         .save-indicator.saving,
-        .save-indicator.saved {
+        .save-indicator.saved,
+        .save-indicator.erro {
             display: block;
+        }
+        .save-indicator.erro {
+            max-width: none;
+            text-align: center;
         }
 
         /* --- Empty state compacto --- */
@@ -491,7 +504,7 @@ if (noteGroupSelect) {
 }
 {% endif %}
 
-function showSaveIndicator(state) {
+function showSaveIndicator(state, mensagem) {
     const indicator = document.getElementById('saveIndicator');
     indicator.className = 'save-indicator ' + state;
 
@@ -502,6 +515,10 @@ function showSaveIndicator(state) {
         setTimeout(() => {
             indicator.className = 'save-indicator';
         }, 2000);
+    } else if (state === 'erro') {
+        // Fica na tela até a próxima gravação dar certo: some-lo deixaria o
+        // usuário achando que o texto foi salvo quando não foi.
+        indicator.textContent = '⚠ ' + (mensagem || 'Não foi possível salvar.');
     }
 }
 
@@ -527,29 +544,38 @@ function saveNote() {
         },
         body: body
     })
-    .then(response => response.json())
+    .then(response => response.json().catch(() => ({
+        success: false,
+        message: 'Resposta inesperada do servidor (' + response.status + ').'
+    })))
     .then(data => {
-        if (data.success) {
-            showSaveIndicator('saved');
-            isDirty = false;
+        if (!data.success) {
+            // isDirty continua verdadeiro: o aviso de sair da página segue
+            // ativo e a próxima digitação tenta gravar de novo.
+            showSaveIndicator('erro', data.message);
+            return;
+        }
 
-            // Atualizar título na sidebar
-            const activeItem = document.querySelector('.note-item.active .note-item-title');
-            if (activeItem) {
-                activeItem.textContent = title;
-            }
+        showSaveIndicator('saved');
+        isDirty = false;
 
-            // Atualizar grupo na sidebar se mudou
-            if (groupId && data.group_name) {
-                const activeGroupBadge = document.querySelector('.note-item.active .note-item-info span:nth-child(2)');
-                if (activeGroupBadge) {
-                    activeGroupBadge.textContent = '📁 ' + data.group_name;
-                }
+        // Atualizar título na sidebar
+        const activeItem = document.querySelector('.note-item.active .note-item-title');
+        if (activeItem) {
+            activeItem.textContent = title;
+        }
+
+        // Atualizar grupo na sidebar se mudou
+        if (groupId && data.group_name) {
+            const activeGroupBadge = document.querySelector('.note-item.active .note-item-info span:nth-child(2)');
+            if (activeGroupBadge) {
+                activeGroupBadge.textContent = '📁 ' + data.group_name;
             }
         }
     })
     .catch(error => {
         console.error('Erro ao salvar:', error);
+        showSaveIndicator('erro', 'Sem conexão com o servidor.');
     });
 }
 
