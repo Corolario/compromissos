@@ -3,6 +3,7 @@ import sqlite3
 from flask import Flask, render_template, request, redirect, url_for, flash, session
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
+from sqlalchemy.orm import joinedload
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from flask_wtf.csrf import CSRFProtect
 from flask_talisman import Talisman
@@ -189,7 +190,7 @@ login_manager.session_protection = 'strong'  # Proteção adicional de sessão
 
 @login_manager.user_loader
 def load_user(user_id):
-    return User.query.get(int(user_id))
+    return db.session.get(User, int(user_id))
 
 
 @app.errorhandler(429)
@@ -305,7 +306,11 @@ def index():
     selected_group_id = request.args.get('group_id', type=int)
 
     # Buscar todas as tarefas dos grupos que o usuário pertence
-    query = Tarefa.query.filter(Tarefa.task_group_id.in_(group_ids))
+    # joinedload traz autor e grupo na mesma consulta: a listagem mostra os dois
+    # em cada linha e, sem isto, cada compromisso gera duas consultas extras.
+    query = (Tarefa.query
+             .options(joinedload(Tarefa.usuario), joinedload(Tarefa.task_group))
+             .filter(Tarefa.task_group_id.in_(group_ids)))
 
     # Aplicar filtro de grupo se selecionado
     if selected_group_id:
@@ -323,7 +328,7 @@ def index():
     members_set = set()
     if selected_group_id:
         # Se um grupo está selecionado, mostrar apenas membros daquele grupo
-        selected_group = TaskGroup.query.get(selected_group_id)
+        selected_group = db.session.get(TaskGroup, selected_group_id)
         if selected_group:
             for member in selected_group.members.all():
                 members_set.add((member.id, member.username))
@@ -375,7 +380,7 @@ def adicionar():
 
     if form.validate_on_submit():
         # Verificar se o usuário pertence ao grupo
-        task_group = TaskGroup.query.get(form.task_group_id.data)
+        task_group = db.session.get(TaskGroup, form.task_group_id.data)
         if not task_group or task_group not in current_user.task_groups:
             flash('Você não pertence a este grupo de tarefas.', 'danger')
             return redirect(url_for('index'))
@@ -402,7 +407,7 @@ def adicionar():
 @app.route('/editar/<int:id>', methods=['GET', 'POST'])
 @login_required
 def editar(id):
-    tarefa = Tarefa.query.get_or_404(id)
+    tarefa = db.get_or_404(Tarefa, id)
 
     # Verificar permissões
     # O administrador do grupo pode editar qualquer tarefa dele
@@ -423,7 +428,7 @@ def editar(id):
 
     if form.validate_on_submit():
         # Verificar se o usuário pertence ao novo grupo
-        new_task_group = TaskGroup.query.get(form.task_group_id.data)
+        new_task_group = db.session.get(TaskGroup, form.task_group_id.data)
         if not new_task_group or new_task_group not in current_user.task_groups:
             flash('Você não pertence a este grupo de tarefas.', 'danger')
             return redirect(url_for('index'))
@@ -447,7 +452,7 @@ def deletar(id):
         flash('Token CSRF inválido.', 'danger')
         return redirect(url_for('index'))
 
-    tarefa = Tarefa.query.get_or_404(id)
+    tarefa = db.get_or_404(Tarefa, id)
 
     # Verificar permissões
     # O administrador do grupo pode deletar qualquer tarefa dele
@@ -491,7 +496,11 @@ def notas():
     selected_user_id = request.args.get('user_id', type=int)
 
     # Buscar todas as notas dos grupos que o usuário pertence
-    query = Note.query.filter(Note.task_group_id.in_(group_ids))
+    # Mesmo motivo da listagem de compromissos: a barra lateral mostra autor e
+    # grupo de cada anotação.
+    query = (Note.query
+             .options(joinedload(Note.usuario), joinedload(Note.task_group))
+             .filter(Note.task_group_id.in_(group_ids)))
 
     # Aplicar filtro de grupo se selecionado
     if selected_group_id and selected_group_id in group_ids:
@@ -507,7 +516,7 @@ def notas():
     members_set = set()
     if selected_group_id:
         # Se um grupo está selecionado, mostrar apenas membros daquele grupo
-        selected_group = TaskGroup.query.get(selected_group_id)
+        selected_group = db.session.get(TaskGroup, selected_group_id)
         if selected_group:
             for member in selected_group.members.all():
                 members_set.add((member.id, member.username))
@@ -521,7 +530,7 @@ def notas():
     # Buscar nota selecionada
     current_note = None
     if selected_note_id:
-        current_note = Note.query.get(selected_note_id)
+        current_note = db.session.get(Note, selected_note_id)
         # Verificar se o usuário tem acesso à nota
         if current_note and current_note.task_group_id not in group_ids:
             current_note = None
@@ -551,7 +560,7 @@ def criar_nota():
         return redirect(url_for('notas'))
 
     # Verificar se o usuário pertence ao grupo
-    task_group = TaskGroup.query.get(task_group_id)
+    task_group = db.session.get(TaskGroup, task_group_id)
     if not task_group or task_group not in current_user.task_groups:
         flash('Você não pertence a este grupo de tarefas.', 'danger')
         return redirect(url_for('notas'))
@@ -573,7 +582,7 @@ def criar_nota():
 @login_required
 def atualizar_nota(id):
     """Atualizar conteúdo da nota - apenas o autor ou o administrador do grupo"""
-    note = Note.query.get_or_404(id)
+    note = db.get_or_404(Note, id)
 
     # Verificar se pertence ao grupo
     if note.task_group not in current_user.task_groups:
@@ -596,7 +605,7 @@ def atualizar_nota(id):
     task_group_id = request.form.get('task_group_id', type=int)
     if task_group_id:
         # Verificar se o usuário pertence ao novo grupo
-        new_group = TaskGroup.query.get(task_group_id)
+        new_group = db.session.get(TaskGroup, task_group_id)
         if new_group and new_group in current_user.task_groups:
             note.task_group_id = task_group_id
 
@@ -621,7 +630,7 @@ def deletar_nota(id):
         flash('Token CSRF inválido.', 'danger')
         return redirect(url_for('notas'))
 
-    note = Note.query.get_or_404(id)
+    note = db.get_or_404(Note, id)
 
     task_group = note.task_group
     if task_group not in current_user.task_groups:
@@ -695,7 +704,7 @@ def admin_create_group():
 @admin_required
 def admin_edit_group(id):
     """Editar grupo de tarefas"""
-    group = TaskGroup.query.get_or_404(id)
+    group = db.get_or_404(TaskGroup, id)
 
     # Verificar se o grupo pertence ao admin
     if group.admin_id != current_user.id:
@@ -725,7 +734,7 @@ def admin_delete_group(id):
         flash('Token CSRF inválido.', 'danger')
         return redirect(url_for('admin_dashboard'))
 
-    group = TaskGroup.query.get_or_404(id)
+    group = db.get_or_404(TaskGroup, id)
 
     # Verificar se o grupo pertence ao admin
     if group.admin_id != current_user.id:
@@ -744,7 +753,7 @@ def admin_delete_group(id):
 @admin_required
 def admin_group_members(id):
     """Gerenciar membros do grupo"""
-    group = TaskGroup.query.get_or_404(id)
+    group = db.get_or_404(TaskGroup, id)
 
     # Verificar se o grupo pertence ao admin
     if group.admin_id != current_user.id:
@@ -770,7 +779,7 @@ def admin_group_members(id):
             form.user_id.choices = [(u.id, u.username) for u in current_members]
 
         if form.validate_on_submit():
-            user = User.query.get(form.user_id.data)
+            user = db.session.get(User, form.user_id.data)
             if not user:
                 flash('Usuário não encontrado.', 'danger')
                 return redirect(url_for('admin_group_members', id=id))
@@ -821,15 +830,21 @@ def admin_create_user():
 
 # ============= INICIALIZAÇÃO =============
 
-def init_db():
-    """Cria as tabelas do banco de dados"""
+def criar_tabelas():
+    """
+    Cria as tabelas que ainda não existem. É seguro chamar de novo: o
+    create_all ignora as que já estão criadas.
+
+    Implementação única, usada tanto por `python app.py` quanto pelo script
+    init_db.py, que apenas acrescenta mensagens e tratamento de erro para uso
+    em linha de comando.
+    """
     with app.app_context():
         db.create_all()
-        print("Banco de dados inicializado!")
 
 
 if __name__ == '__main__':
-    init_db()
+    criar_tabelas()
     # O debugger do Werkzeug executa código arbitrário através do navegador,
     # portanto só é habilitado fora de produção. O bind padrão é 127.0.0.1
     # para não expor o servidor de desenvolvimento na rede; use

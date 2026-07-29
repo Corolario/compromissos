@@ -2,9 +2,21 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_login import UserMixin
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
-from datetime import datetime
+from datetime import datetime, timezone
 
 db = SQLAlchemy()
+
+
+def agora_utc():
+    """
+    Horário atual em UTC, sem informação de fuso.
+
+    Substitui datetime.utcnow, que está descontinuado desde o Python 3.12 (a
+    imagem da aplicação usa 3.13). O valor é o mesmo de antes: as colunas são
+    DateTime sem fuso, então o horário é gravado ingênuo para não misturar
+    valores com e sem fuso no banco já existente.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 # Inicializar Argon2 Password Hasher
 # Argon2id é a variante recomendada que combina resistência a ataques de tempo e memória
@@ -27,7 +39,7 @@ class User(UserMixin, db.Model):
     username = db.Column(db.String(80), unique=True, nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
     is_admin = db.Column(db.Boolean, default=False, nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=agora_utc)
 
     # Administrador que cadastrou este usuário pela interface web. Fica nulo
     # para os administradores criados pelo script create_user.py. É o que
@@ -100,7 +112,7 @@ class TaskGroup(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(120), nullable=False)
     description = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=agora_utc)
     admin_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
 
     # Relacionamento com o administrador do grupo
@@ -143,7 +155,7 @@ class Tarefa(ConteudoDeGrupo, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     data = db.Column(db.Date, nullable=False)
     descricao = db.Column(db.Text, nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=agora_utc)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     task_group_id = db.Column(db.Integer, db.ForeignKey('task_groups.id'), nullable=False)
 
@@ -157,8 +169,8 @@ class Note(ConteudoDeGrupo, db.Model):
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(200), nullable=False)
     content = db.Column(db.Text, default='')
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=agora_utc)
+    updated_at = db.Column(db.DateTime, default=agora_utc, onupdate=agora_utc)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     task_group_id = db.Column(db.Integer, db.ForeignKey('task_groups.id'), nullable=False)
 
