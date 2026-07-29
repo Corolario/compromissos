@@ -34,6 +34,10 @@ services:
       # Armazenamento do contador de tentativas. Em memória cada worker conta
       # separadamente; aponte para um Redis se quiser um limite exato.
       - RATELIMIT_STORAGE_URI=${RATELIMIT_STORAGE_URI:-memory://}
+      # Tentativas de login mal-sucedidas permitidas por endereço.
+      - LOGIN_RATE_LIMIT=${LOGIN_RATE_LIMIT:-3 per minute; 10 per hour; 25 per day}
+      # Processos do gunicorn. Mantenha baixo por causa do SQLite.
+      - GUNICORN_WORKERS=${GUNICORN_WORKERS:-2}
     healthcheck:
       # A imagem python:slim não traz curl; usa-se o próprio Python.
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/login')"]

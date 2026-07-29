@@ -1,5 +1,8 @@
 import os
+import sqlite3
 from flask import Flask, render_template, request, redirect, url_for, flash, session
+from sqlalchemy import event
+from sqlalchemy.engine import Engine
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from flask_wtf.csrf import CSRFProtect
 from flask_talisman import Talisman
@@ -70,6 +73,32 @@ if PROXIES_CONFIAVEIS > 0:
                             x_proto=PROXIES_CONFIAVEIS,
                             x_host=PROXIES_CONFIAVEIS)
 
+@event.listens_for(Engine, 'connect')
+def configurar_conexao_sqlite(conexao, _registro):
+    """
+    Ajusta cada conexão SQLite para suportar vários workers do gunicorn.
+
+    O SQLite aceita um escritor por vez. No modo padrão (journal DELETE) uma
+    escrita bloqueia também os leitores, e um segundo escritor falha na hora
+    com "database is locked" - situação provável com a gravação automática das
+    anotações disparando a cada pausa na digitação.
+
+    - WAL: leitores não são bloqueados por quem escreve, e vice-versa.
+    - busy_timeout: quem encontra o banco ocupado espera em vez de falhar.
+    - synchronous NORMAL: seguro sob WAL e bem mais rápido que FULL.
+
+    Não faz nada se o banco não for SQLite, então trocar para PostgreSQL
+    continua funcionando sem alteração.
+    """
+    if not isinstance(conexao, sqlite3.Connection):
+        return
+    cursor = conexao.cursor()
+    cursor.execute('PRAGMA journal_mode=WAL')
+    cursor.execute('PRAGMA busy_timeout=15000')
+    cursor.execute('PRAGMA synchronous=NORMAL')
+    cursor.close()
+
+
 # Inicializar extensões
 db.init_app(app)
 bootstrap = Bootstrap5(app)
@@ -127,6 +156,13 @@ def login_falhou(resposta):
     senha não gasta cota, e quem erra é quem vai sendo contido.
     """
     return resposta.status_code != 302
+
+
+# Quantas tentativas de login mal-sucedidas cada endereço pode fazer.
+# Como só o erro desconta, quem sabe a senha nunca esbarra nestes números.
+# Lembrando que não há recuperação de senha por conta própria: um usuário
+# trancado depende do administrador (create_user.py, opção 3).
+LIMITE_LOGIN = os.getenv('LOGIN_RATE_LIMIT', '3 per minute; 10 per hour; 25 per day')
 
 # Headers de segurança com Flask-Talisman (apenas em produção)
 if os.getenv('FLASK_ENV') == 'production':
@@ -203,7 +239,7 @@ def admin_required(f):
 # ============= ROTAS DE AUTENTICAÇÃO =============
 
 @app.route('/login', methods=['GET', 'POST'])
-@limiter.limit('5 per minute; 40 per hour',
+@limiter.limit(LIMITE_LOGIN,
                methods=['POST'],
                deduct_when=login_falhou,
                error_message='Muitas tentativas de login. Aguarde alguns minutos e tente novamente.')
