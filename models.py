@@ -29,6 +29,13 @@ class User(UserMixin, db.Model):
     is_admin = db.Column(db.Boolean, default=False, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+    # Administrador que cadastrou este usuário pela interface web. Fica nulo
+    # para os administradores criados pelo script create_user.py. É o que
+    # permite a um administrador gerenciar os usuários que ele mesmo criou,
+    # mesmo antes de adicioná-los a algum grupo.
+    created_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_by = db.relationship('User', remote_side=[id], backref='usuarios_criados')
+
     # Relacionamento com tarefas
     tarefas = db.relationship('Tarefa', backref='usuario', lazy=True, cascade='all, delete-orphan')
 
@@ -109,7 +116,28 @@ class TaskGroup(db.Model):
         return f'<TaskGroup {self.name}>'
 
 
-class Tarefa(db.Model):
+class ConteudoDeGrupo:
+    """
+    Regra de permissão comum aos conteúdos que vivem dentro de um grupo
+    (compromissos e anotações).
+
+    Quem pode alterar é o autor do conteúdo ou o administrador daquele grupo
+    específico — o campo TaskGroup.admin_id. A flag global User.is_admin não
+    entra na conta: ela apenas dá acesso à área administrativa, e usá-la aqui
+    faria com que qualquer administrador do sistema, ao ser adicionado como
+    membro de um grupo alheio, passasse a poder editar e apagar o conteúdo de
+    todos os demais membros.
+    """
+
+    def pode_editar(self, usuario):
+        if usuario is None or not usuario.is_authenticated:
+            return False
+        if self.user_id == usuario.id:
+            return True
+        return self.task_group is not None and self.task_group.admin_id == usuario.id
+
+
+class Tarefa(ConteudoDeGrupo, db.Model):
     __tablename__ = 'tarefas'
 
     id = db.Column(db.Integer, primary_key=True)
@@ -123,7 +151,7 @@ class Tarefa(db.Model):
         return f'<Tarefa {self.id}: {self.data}>'
 
 
-class Note(db.Model):
+class Note(ConteudoDeGrupo, db.Model):
     __tablename__ = 'notes'
 
     id = db.Column(db.Integer, primary_key=True)

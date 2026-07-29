@@ -97,6 +97,20 @@ def tornar_sessao_permanente():
 
 # ============= DECORADORES =============
 
+def usuarios_visiveis_para(admin):
+    """
+    IDs dos usuários comuns que um administrador pode ver e gerenciar.
+
+    São os que ele mesmo cadastrou pela interface web e os que já pertencem a
+    algum grupo administrado por ele. Sem esse recorte, um administrador
+    enxergaria e poderia recrutar os usuários de todos os outros.
+    """
+    ids = {u.id for u in User.query.filter_by(created_by_id=admin.id, is_admin=False)}
+    for grupo in TaskGroup.query.filter_by(admin_id=admin.id):
+        ids.update(membro.id for membro in grupo.members)
+    return ids
+
+
 def admin_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -272,14 +286,14 @@ def editar(id):
     tarefa = Tarefa.query.get_or_404(id)
 
     # Verificar permissões
-    # Admin pode editar qualquer tarefa do grupo
-    # Usuário comum só pode editar suas próprias tarefas
+    # O administrador do grupo pode editar qualquer tarefa dele
+    # Os demais membros só podem editar suas próprias tarefas
     task_group = tarefa.task_group
     if task_group not in current_user.task_groups:
         flash('Você não tem permissão para editar esta tarefa.', 'danger')
         return redirect(url_for('index'))
 
-    if not current_user.is_admin and tarefa.user_id != current_user.id:
+    if not tarefa.pode_editar(current_user):
         flash('Você não tem permissão para editar esta tarefa.', 'danger')
         return redirect(url_for('index'))
 
@@ -317,14 +331,14 @@ def deletar(id):
     tarefa = Tarefa.query.get_or_404(id)
 
     # Verificar permissões
-    # Admin pode deletar qualquer tarefa do grupo
-    # Usuário comum só pode deletar suas próprias tarefas
+    # O administrador do grupo pode deletar qualquer tarefa dele
+    # Os demais membros só podem deletar suas próprias tarefas
     task_group = tarefa.task_group
     if task_group not in current_user.task_groups:
         flash('Você não tem permissão para deletar esta tarefa.', 'danger')
         return redirect(url_for('index'))
 
-    if not current_user.is_admin and tarefa.user_id != current_user.id:
+    if not tarefa.pode_editar(current_user):
         flash('Você não tem permissão para deletar esta tarefa.', 'danger')
         return redirect(url_for('index'))
 
@@ -437,20 +451,21 @@ def criar_nota():
 @app.route('/notas/<int:id>/atualizar', methods=['POST'])
 @login_required
 def atualizar_nota(id):
-    """Atualizar conteúdo da nota - apenas autor ou admin"""
+    """Atualizar conteúdo da nota - apenas o autor ou o administrador do grupo"""
     note = Note.query.get_or_404(id)
 
     # Verificar se pertence ao grupo
     if note.task_group not in current_user.task_groups:
         return {'success': False, 'message': 'Você não tem permissão para editar esta nota.'}, 403
 
-    # Verificar se é autor ou admin
-    if note.user_id != current_user.id and not current_user.is_admin:
-        return {'success': False, 'message': 'Apenas o autor ou um administrador podem editar esta nota.'}, 403
+    # Verificar se é o autor ou o administrador do grupo
+    if not note.pode_editar(current_user):
+        return {'success': False,
+                'message': 'Apenas o autor ou o administrador do grupo podem editar esta nota.'}, 403
 
-    # Autor ou admin podem alterar o grupo
+    # Quem pode editar também pode mover a nota para outro dos seus grupos
     task_group_id = request.form.get('task_group_id', type=int)
-    if task_group_id and (note.user_id == current_user.id or current_user.is_admin):
+    if task_group_id:
         # Verificar se o usuário pertence ao novo grupo
         new_group = TaskGroup.query.get(task_group_id)
         if new_group and new_group in current_user.task_groups:
@@ -474,7 +489,7 @@ def atualizar_nota(id):
 @app.route('/notas/<int:id>/deletar', methods=['POST'])
 @login_required
 def deletar_nota(id):
-    """Deletar nota - autor ou admin podem deletar"""
+    """Deletar nota - o autor ou o administrador do grupo podem deletar"""
     note = Note.query.get_or_404(id)
 
     task_group = note.task_group
@@ -482,9 +497,9 @@ def deletar_nota(id):
         flash('Você não tem permissão para deletar esta nota.', 'danger')
         return redirect(url_for('notas'))
 
-    # Verificar permissões - autor ou admin podem deletar
-    if note.user_id != current_user.id and not current_user.is_admin:
-        flash('Apenas o criador da nota ou um administrador podem deletá-la.', 'danger')
+    # Verificar permissões - o autor ou o administrador do grupo podem deletar
+    if not note.pode_editar(current_user):
+        flash('Apenas o criador da nota ou o administrador do grupo podem deletá-la.', 'danger')
         return redirect(url_for('notas'))
 
     group_id = note.task_group_id
@@ -502,7 +517,14 @@ def deletar_nota(id):
 def admin_dashboard():
     """Dashboard de administração"""
     groups = TaskGroup.query.filter_by(admin_id=current_user.id).all()
-    users = User.query.filter_by(is_admin=False).all()
+
+    # Mostra apenas os usuários comuns que já são membros de algum grupo deste
+    # administrador, mais os que ele mesmo cadastrou. Listar todos os usuários
+    # do sistema expunha os usuários de outros administradores.
+    users = (User.query
+             .filter_by(is_admin=False)
+             .filter(User.id.in_(usuarios_visiveis_para(current_user)))
+             .all())
     return render_template('admin/dashboard.html', groups=groups, users=users)
 
 
@@ -590,9 +612,12 @@ def admin_group_members(id):
 
     form = ManageMemberForm()
 
-    # Listar membros atuais e usuários disponíveis
+    # Listar membros atuais e usuários disponíveis. O administrador só pode
+    # recrutar entre os usuários que ele gerencia; ele próprio sempre aparece,
+    # já que precisa ser membro do grupo para enxergar o conteúdo.
     current_members = group.members.all()
-    all_users = User.query.all()  # Incluir todos os usuários, inclusive admins
+    ids_recrutaveis = usuarios_visiveis_para(current_user) | {current_user.id}
+    all_users = User.query.filter(User.id.in_(ids_recrutaveis)).all()
 
     if request.method == 'POST':
         # Preencher choices dinamicamente antes da validação
@@ -642,7 +667,8 @@ def admin_create_user():
     form = CreateUserForm()
 
     if form.validate_on_submit():
-        user = User(username=form.username.data, is_admin=False)
+        user = User(username=form.username.data, is_admin=False,
+                    created_by_id=current_user.id)
         user.set_password(form.password.data)
         db.session.add(user)
         db.session.commit()
