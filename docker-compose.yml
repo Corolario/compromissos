@@ -9,38 +9,17 @@ services:
     volumes:
       # Persistir banco de dados
       - ./data:/app/data
+    # Toda a configuração vem do .env, que é a única fonte. Copie o
+    # .env.example, que já vem com valores de produção, e ajuste o que precisar.
+    # O compose falha se o arquivo não existir.
+    env_file: .env
     environment:
-      # Sem valor padrão de propósito: uma SECRET_KEY conhecida permite forjar
-      # sessões e entrar como qualquer usuário. O compose falha se não estiver
-      # definida no .env.
-      - "SECRET_KEY=${SECRET_KEY:?defina SECRET_KEY no arquivo .env - gere com python3 -c 'import secrets; print(secrets.token_hex(32))'}"
+      # Única exceção: este caminho descreve a estrutura da imagem, não uma
+      # escolha de quem instala. É absoluto e aponta para o volume montado em
+      # data/; um caminho relativo cairia em /app/instance e os dados se
+      # perderiam ao recriar o contêiner. Definido aqui, prevalece sobre o
+      # DATABASE_URL do .env, que serve para rodar fora do contêiner.
       - DATABASE_URL=sqlite:////app/data/tarefas.db
-      - FLASK_ENV=${FLASK_ENV:-production}
-      # Em produção o Flask-Talisman já força HTTPS, então os cookies e a
-      # validação de origem do CSRF assumem TLS. Ajuste no .env apenas se
-      # estiver rodando sem HTTPS.
-      - SESSION_COOKIE_SECURE=${SESSION_COOKIE_SECURE:-True}
-      - WTF_CSRF_SSL_STRICT=${WTF_CSRF_SSL_STRICT:-True}
-      # Cabeçalho que traz o IP real do visitante, quando há proxy na frente.
-      # Sem isto o limite de tentativas de login conta todo mundo junto e um
-      # atacante tranca a aplicação inteira.
-      #   Cloudflare Tunnel : CF-Connecting-IP
-      #   nginx             : X-Forwarded-For
-      - CLIENT_IP_HEADER=${CLIENT_IP_HEADER:-}
-      # Quantos proxies reversos existem na frente da aplicação. Afeta o
-      # esquema e o host que a aplicação enxerga. Deixe 0 com Cloudflare
-      # Tunnel: o cloudflared já envia X-Forwarded-Proto, que basta.
-      - TRUSTED_PROXY_COUNT=${TRUSTED_PROXY_COUNT:-0}
-      # Armazenamento do contador de tentativas. Em memória cada worker conta
-      # separadamente; aponte para um Redis se quiser um limite exato.
-      - RATELIMIT_STORAGE_URI=${RATELIMIT_STORAGE_URI:-memory://}
-      # Tentativas de login mal-sucedidas permitidas por endereço.
-      - LOGIN_RATE_LIMIT=${LOGIN_RATE_LIMIT:-3 per minute; 10 per hour; 25 per day}
-      # Processos do gunicorn. Mantenha baixo por causa do SQLite.
-      - GUNICORN_WORKERS=${GUNICORN_WORKERS:-2}
-      # Fuso horário do contêiner. Os horários são gravados e exibidos neste
-      # fuso, sem conversão, então é o que aparece na tela.
-      - TZ=${TZ:-America/Sao_Paulo}
     healthcheck:
       # A imagem python:slim não traz curl; usa-se o próprio Python.
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/login')"]

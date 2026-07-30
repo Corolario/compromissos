@@ -25,16 +25,29 @@ sua lista de membros.
 
 ### Por que a distinção importa
 
-Imagine que você criou o grupo "Vendas". A Ana também é administradora do
-sistema, porque cuida da equipe dela. Você adiciona a Ana ao grupo "Vendas"
-para ela acompanhar o calendário.
+Imagine que você criou o grupo "Vendas" e cadastrou a Maria como usuária. Ao
+adicioná-la ao grupo, ela passa a ver todos os compromissos e anotações e a
+criar os dela — mas não pode alterar nem apagar o que é dos outros. Quem manda
+no conteúdo do grupo "Vendas" é quem o criou: você.
 
-**A Ana entra como membro comum.** Ela vê todos os compromissos e anotações,
-cria os dela, mas não pode alterar nem apagar o que é dos outros — porque quem
-manda no grupo "Vendas" é quem o criou, você.
+Ser administrador do sistema não mudaria isso. A regra completa, em uma frase:
+**quem pode alterar um compromisso ou uma anotação é o autor dele ou o
+administrador daquele grupo** — nunca a marca de administrador por si só.
 
-A regra completa, em uma frase: **quem pode alterar um compromisso ou uma
-anotação é o autor dele ou o administrador daquele grupo.**
+### Administradores não entram em grupos alheios
+
+Cada administrador só pode adicionar aos seus grupos os usuários que ele mesmo
+cadastrou. Como administradores são criados apenas pelo `create_user.py`, e não
+pela interface, **um administrador nunca aparece na lista de quem pode ser
+adicionado ao grupo de outro**.
+
+Na prática, dois administradores usando a mesma instalação ficam completamente
+separados: não veem os usuários um do outro, não entram nos grupos um do outro
+e não têm como alcançar o conteúdo um do outro.
+
+Se você precisa que duas pessoas administrem o mesmo conjunto de compromissos,
+o caminho é as duas usarem grupos criados pelo mesmo administrador, com a
+segunda entrando como usuária comum.
 
 ### Resumo
 

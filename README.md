@@ -46,9 +46,12 @@ Existem dois papéis, e a diferença entre eles costuma gerar confusão:
 | **Administrador do grupo** | Quem criou aquele grupo | Editar e apagar todo o conteúdo **daquele** grupo |
 
 O ponto importante: **poder sobre conteúdo vem de ser dono do grupo, não da
-flag de administrador**. Um administrador do sistema que seja apenas membro de
-um grupo alheio se comporta ali como qualquer outro membro — vê tudo, mas só
-mexe no que é dele.
+flag de administrador**. Quem não criou o grupo se comporta ali como qualquer
+membro — vê tudo, mas só altera o que é dele.
+
+Os administradores também ficam isolados entre si: cada um enxerga apenas os
+próprios grupos e os usuários que cadastrou, e não consegue adicionar outro
+administrador aos seus grupos.
 
 Detalhes completos em [docs/administracao.md](docs/administracao.md).
 
@@ -87,13 +90,28 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Abra o `.env` e defina uma `SECRET_KEY`. **A aplicação recusa iniciar sem
-ela** — é a chave que assina os cookies de sessão, e um valor previsível
-permitiria a qualquer pessoa forjar uma sessão de administrador.
+Abra o `.env` e faça dois ajustes.
+
+**Primeiro, defina uma `SECRET_KEY`.** Ela vem vazia de propósito, e a
+aplicação recusa iniciar assim — é a chave que assina os cookies de sessão, e
+um valor previsível permitiria a qualquer pessoa forjar uma sessão de
+administrador.
 
 ```bash
 python3 -c 'import secrets; print(secrets.token_hex(32))'
 ```
+
+**Depois, troque para o modo de desenvolvimento.** O modelo vem configurado
+para produção, que exige HTTPS:
+
+```env
+FLASK_ENV=development
+SESSION_COOKIE_SECURE=False
+WTF_CSRF_SSL_STRICT=False
+```
+
+Sem isso, o navegador é redirecionado para HTTPS e o cookie de sessão não é
+enviado, impedindo o login em `http://localhost`.
 
 ```bash
 # 3. Iniciar (as tabelas são criadas automaticamente)

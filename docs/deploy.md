@@ -93,8 +93,8 @@ incluindo você. O passo a passo está em [administracao.md](administracao.md).
 
 ## Expor na internet
 
-A aplicação assume que há **HTTPS** na frente dela. Em produção
-(`FLASK_ENV=production`, que é o padrão) o Flask-Talisman redireciona qualquer
+A aplicação assume que há **HTTPS** na frente dela. O `.env.example` já vem com
+`FLASK_ENV=production`, e nesse modo o Flask-Talisman redireciona qualquer
 acesso HTTP para HTTPS. Publicar a porta 5000 direto na internet, sem TLS, não
 funciona — o navegador entra em ciclo de redirecionamento.
 
@@ -178,13 +178,27 @@ sudo ufw enable
 
 ## Variáveis de ambiente
 
-Todas ficam no `.env`, lido pelo `docker compose`.
+O `.env` é a **única fonte de configuração**: o `docker-compose.yml` o lê por
+inteiro e repassa ao contêiner, sem repetir valor nenhum. Para mudar qualquer
+comportamento, edite o `.env` e reinicie — o compose não precisa ser tocado.
+
+Se o arquivo não existir, o `docker compose` recusa subir. Comece sempre
+copiando o modelo, que já vem preenchido para produção:
+
+```bash
+cp .env.example .env
+```
+
+A única exceção é o `DATABASE_URL` dentro do contêiner, fixado no
+`docker-compose.yml` porque descreve a estrutura da imagem: ele aponta para
+`/app/data/tarefas.db`, a pasta persistida em volume. O `DATABASE_URL` do
+`.env` continua valendo ao rodar fora do contêiner, com `python app.py`.
 
 ### Obrigatória
 
 | Variável | Descrição |
 |---|---|
-| `SECRET_KEY` | Assina os cookies de sessão. Gere com `secrets.token_hex(32)` e mantenha em segredo. Sem ela a aplicação não sobe. |
+| `SECRET_KEY` | Assina os cookies de sessão. Gere com `secrets.token_hex(32)` e mantenha em segredo. **Vem vazia no modelo**, e a aplicação recusa iniciar enquanto assim estiver. |
 
 ### Identificação do visitante
 
@@ -198,10 +212,12 @@ do proxy. Caso contrário, o cabeçalho pode ser forjado.
 
 ### Comportamento
 
-| Variável | Padrão | Descrição |
+Os valores abaixo são os que vêm no `.env.example`.
+
+| Variável | No modelo | Descrição |
 |---|---|---|
 | `TZ` | `America/Sao_Paulo` | Fuso horário. Os horários são gravados e exibidos nele, sem conversão. |
-| `FLASK_ENV` | `production` | Em produção ativa HTTPS obrigatório, HSTS e CSP. |
+| `FLASK_ENV` | `production` | Ativa HTTPS obrigatório, HSTS e CSP. Use `development` para trabalhar em `http://localhost`. |
 | `GUNICORN_WORKERS` | `2` | Processos do servidor. Manter baixo por causa do SQLite. |
 | `LOGIN_RATE_LIMIT` | `3 per minute; 10 per hour; 25 per day` | Tentativas de login **mal-sucedidas** por endereço. |
 | `RATELIMIT_STORAGE_URI` | `memory://` | Onde fica o contador de tentativas. |
@@ -209,8 +225,10 @@ do proxy. Caso contrário, o cabeçalho pode ser forjado.
 | `WTF_CSRF_SSL_STRICT` | `True` | Confere a origem das requisições sob HTTPS. |
 | `UID` / `GID` | `1000` | Dono dos arquivos em `data/`, para não ficarem como `root`. |
 
-O `DATABASE_URL` é fixado pelo `docker-compose.yml` e aponta para
-`/app/data/tarefas.db`. Defini-lo no `.env` não tem efeito no contêiner.
+> Ao rodar **fora** do contêiner, com `python app.py`, troque `FLASK_ENV` para
+> `development` e `SESSION_COOKIE_SECURE`/`WTF_CSRF_SSL_STRICT` para `False`.
+> Com os valores de produção, o navegador é redirecionado para HTTPS e o cookie
+> de sessão não é enviado, impedindo o login em `http://localhost`.
 
 ### Sobre o limite de login
 
