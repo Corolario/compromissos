@@ -235,10 +235,22 @@ Os valores abaixo são os que vêm no `.env.example`.
 Só tentativas **erradas** descontam. Quem acerta a senha nunca esbarra no
 limite, mesmo entrando várias vezes seguidas.
 
-Vale saber que **não existe recuperação de senha pela aplicação**. Quem
-estourar o limite diário fica sem entrar até que um administrador redefina a
-senha com o `create_user.py` (opção 3). Se achar apertado para o seu uso, ajuste
-`LOGIN_RATE_LIMIT`.
+O bloqueio é **temporário e se desfaz sozinho** — ninguém precisa ser
+destravado manualmente. Cada janela conta a partir da primeira tentativa dela,
+então a espera depende de qual limite foi atingido:
+
+| Limite atingido | Espera até |
+|---|---|
+| 3 por minuto | 1 minuto |
+| 10 por hora | 1 hora |
+| 25 por dia | 24 horas |
+
+Passado esse tempo, a senha correta volta a funcionar normalmente. Se achar
+apertado para o seu uso, ajuste `LOGIN_RATE_LIMIT`.
+
+O administrador só é necessário em outra situação: quando a pessoa **esqueceu**
+a senha. A aplicação não tem recuperação por conta própria, então nesse caso
+alguém precisa redefini-la com o `create_user.py` (opção 3).
 
 Com mais de um worker, o contador em memória é mantido **por processo**, então o
 limite efetivo fica multiplicado pelo número de workers. Para um limite exato,

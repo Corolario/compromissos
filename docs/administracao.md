@@ -117,9 +117,12 @@ administradores e usuários comuns.
 
 ### 3. Alterar senha de usuário
 
-Serve para qualquer usuário, administrador ou não. É o caminho para destravar
-alguém que esqueceu a senha ou que estourou o limite de tentativas de login —
-não existe recuperação de senha pela própria aplicação.
+Serve para qualquer usuário, administrador ou não. É o caminho para atender
+quem **esqueceu** a senha, já que a aplicação não tem recuperação por conta
+própria.
+
+Não confunda com o limite de tentativas de login: aquele bloqueio é temporário
+e se desfaz sozinho depois de alguns minutos, sem precisar de ninguém.
 
 ### 4. Deletar usuário
 

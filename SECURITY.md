@@ -155,9 +155,11 @@ pip list --outdated
 
 ## Limitações conhecidas
 
-**Sem recuperação de senha.** Quem perde a senha ou estoura o limite de
-tentativas depende de um administrador com acesso ao servidor
-(`create_user.py`, opção 3).
+**Sem recuperação de senha.** Quem esquece a senha depende de um administrador
+com acesso ao servidor (`create_user.py`, opção 3).
+
+Isso não vale para o limite de tentativas de login: aquele bloqueio expira
+sozinho, em até 1 minuto, 1 hora ou 24 horas conforme o limite atingido.
 
 **Contador de tentativas por processo.** Com o padrão `memory://`, cada worker
 do gunicorn mantém a própria contagem, então o limite efetivo é multiplicado
