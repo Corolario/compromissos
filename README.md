@@ -178,11 +178,11 @@ agenda-tarefas/
 └── .env.example              # Modelo de configuração
 ```
 
-> As duas pastas do banco não são redundância. Rodando local, o
-> `DATABASE_URL` padrão usa um caminho relativo, e o Flask-SQLAlchemy o resolve
-> dentro de `instance/`. No contêiner, o `docker-compose.yml` fixa o caminho
-> absoluto `/app/data/tarefas.db`, que é a pasta persistida em volume. Ambas são
-> criadas sozinhas no primeiro uso.
+> As duas pastas do banco não são redundância. Rodando local, o caminho padrão
+> é relativo e o Flask-SQLAlchemy o resolve dentro de `instance/`. No contêiner,
+> o `docker-compose.yml` fixa o caminho absoluto `/app/data/tarefas.db`, que é a
+> pasta persistida em volume. Ambas são criadas sozinhas no primeiro uso, e
+> apenas uma delas é usada de cada vez.
 
 ---
 

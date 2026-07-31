@@ -189,10 +189,15 @@ copiando o modelo, que já vem preenchido para produção:
 cp .env.example .env
 ```
 
-A única exceção é o `DATABASE_URL` dentro do contêiner, fixado no
-`docker-compose.yml` porque descreve a estrutura da imagem: ele aponta para
-`/app/data/tarefas.db`, a pasta persistida em volume. O `DATABASE_URL` do
-`.env` continua valendo ao rodar fora do contêiner, com `python app.py`.
+A única exceção é o `DATABASE_URL`, que **não fica no `.env`**: ele descreve a
+estrutura da imagem, não uma escolha de quem instala. O `docker-compose.yml` o
+fixa em `/app/data/tarefas.db`, a pasta persistida em volume.
+
+O caminho precisa ser absoluto. Um caminho relativo, como
+`sqlite:///tarefas.db`, seria resolvido pelo Flask-SQLAlchemy dentro de
+`instance/` — ou seja, `/app/instance/tarefas.db`, **fora do volume**. A
+aplicação funcionaria normalmente até o primeiro `docker compose down` seguido
+de recriação, quando os dados desapareceriam sem aviso.
 
 ### Obrigatória
 
