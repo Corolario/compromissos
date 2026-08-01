@@ -18,6 +18,7 @@ Werkzeug==3.1.8
 argon2-cffi==25.1.0  # Hashing de senhas seguro (vencedor Password Hashing Competition)
 Flask-WTF==1.3.0  # Proteção CSRF e validação de formulários
 Flask-Talisman==1.1.0  # Headers de segurança HTTP (HTTPS, CSP, etc.)
+Flask-Limiter==4.1.1  # Limite de tentativas de login (forca bruta)
 
 # Utilitários
 python-dotenv==1.2.2
@@ -30,12 +31,16 @@ argon2-cffi-bindings==25.1.0
 blinker==1.9.0
 cffi==2.1.0
 click==8.4.2
+Deprecated==1.3.1
 greenlet==3.5.4
 itsdangerous==2.2.0
 Jinja2==3.1.6
+limits==5.8.0
 MarkupSafe==3.0.3
+ordered-set==4.1.0
 packaging==26.2
 pycparser==3.0
 SQLAlchemy==2.0.51
 typing_extensions==4.16.0
+wrapt==2.3.0
 WTForms==3.2.2

@@ -6,6 +6,11 @@
 *.db
 *.sqlite
 *.sqlite3
+# Arquivos auxiliares do modo WAL
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
 
 # Python
 __pycache__/

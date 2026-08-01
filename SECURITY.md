@@ -1,156 +1,173 @@
-# Melhorias de Segurança Implementadas
+# Segurança
 
-Este documento descreve as melhorias de segurança implementadas no projeto para garantir a proteção dos dados e a longevidade da aplicação.
+## Relatar uma vulnerabilidade
 
-## 🔒 Tecnologias de Segurança Implementadas
+Encontrou uma falha? Abra uma
+[issue](https://github.com/Corolario/agenda-tarefas/issues) descrevendo o
+problema e como reproduzi-lo. Se a falha permitir acesso a dados de outras
+pessoas, evite publicar os detalhes de exploração até que haja correção.
 
-### 1. Argon2 para Hashing de Senhas
+---
 
-**O que é:** Argon2 é o vencedor do Password Hashing Competition (PHC) e é considerado o estado da arte em hashing de senhas.
+## Proteções implementadas
 
-**Por que usar:**
-- Resistente a ataques de GPU e ASIC
-- Proteção contra ataques de força bruta
-- Resistente a rainbow tables
-- Parâmetros ajustáveis (tempo, memória, paralelismo)
+### Senhas
 
-**Implementação:**
-```python
-from argon2 import PasswordHasher
+Guardadas como hash **Argon2id**, através da biblioteca `argon2-cffi`. O Argon2
+venceu a Password Hashing Competition e é o padrão recomendado hoje: consome
+memória de propósito, o que torna ataques com GPU muito mais caros do que
+contra algoritmos apenas baseados em iteração.
 
-ph = PasswordHasher()
-hash = ph.hash(password)  # Criar hash
-ph.verify(hash, password)  # Verificar senha
-```
+A senha em texto nunca é gravada nem registrada em log. Quando os parâmetros do
+Argon2 mudam, o hash é regravado automaticamente no login seguinte.
 
-**Vantagens sobre Werkzeug (SHA-256):**
-- Argon2 usa mais memória, tornando ataques paralelos muito mais caros
-- Parâmetros ajustáveis (tempo, memória, paralelismo)
-- Projetado especificamente para hashing de senhas
+### Tentativas de login
 
-### 2. Flask-WTF para Proteção CSRF
+Limitadas por endereço de origem: **3 por minuto, 10 por hora e 25 por dia**,
+ajustável em `LOGIN_RATE_LIMIT`.
 
-**O que é:** Flask-WTF adiciona proteção contra ataques Cross-Site Request Forgery (CSRF).
+Só tentativas **erradas** descontam do limite. Quem acerta a senha nunca é
+bloqueado, mesmo entrando várias vezes seguidas.
 
-**Por que usar:**
-- Protege todos os formulários contra CSRF
-- Validação de dados no servidor
-- Mensagens de erro amigáveis
+Atrás de um proxy, é indispensável configurar `CLIENT_IP_HEADER` para que o
+limite enxergue o visitante real. Sem isso todas as tentativas são contadas
+como se viessem da mesma pessoa, e um desconhecido consegue trancar o login de
+todos. Veja [docs/deploy.md](docs/deploy.md).
 
-**Implementação:**
-- Todos os formulários agora usam classes WTForms
-- Token CSRF automático em todos os forms
-- Validação de dados integrada
+### Descoberta de nomes de usuário
 
-### 3. Flask-Talisman para Headers de Segurança
+Um login com usuário inexistente leva o mesmo tempo de um com usuário válido e
+senha errada. Sem esse cuidado, a diferença de tempo de resposta permitiria
+descobrir quais nomes existem — e a mensagem de erro é sempre a mesma, sem
+distinguir os dois casos.
 
-**O que é:** Flask-Talisman adiciona headers de segurança HTTP automaticamente.
+### Sessão
 
-**Headers implementados:**
-- **HTTPS**: Force HTTPS em produção
-- **HSTS**: HTTP Strict Transport Security
-- **CSP**: Content Security Policy
-- **X-Frame-Options**: Proteção contra clickjacking
-- **X-Content-Type-Options**: Proteção contra MIME sniffing
+| Proteção | Efeito |
+|---|---|
+| `HttpOnly` | JavaScript não lê o cookie de sessão |
+| `SameSite=Lax` | Reduz o alcance de requisições vindas de outros sites |
+| `Secure` | Em produção, o cookie só trafega por HTTPS |
+| Expiração em 1 hora | A sessão vence sozinha |
+| `session_protection = 'strong'` | Invalida a sessão se as características da conexão mudarem |
 
-**Configuração:**
-- Ativado apenas em produção (FLASK_ENV=production)
-- CSP configurado para permitir estilos inline necessários
+A `SECRET_KEY` assina esses cookies. **A aplicação recusa iniciar sem ela**:
+com uma chave previsível, qualquer pessoa monta um cookie válido e entra como
+administrador.
 
-### 4. Configurações de Segurança de Sessão
+### Formulários
 
-**Implementações:**
-```python
-SESSION_COOKIE_HTTPONLY = True  # Cookie não acessível via JavaScript
-SESSION_COOKIE_SAMESITE = 'Lax'  # Proteção contra CSRF
-SESSION_COOKIE_SECURE = True  # HTTPS apenas (produção)
-PERMANENT_SESSION_LIFETIME = 3600  # Sessão expira em 1 hora
-```
+Todos passam por Flask-WTF, com **proteção CSRF** aplicada a todas as
+requisições que alteram dados — inclusive a gravação automática das anotações,
+feita por JavaScript.
 
-## 📦 Dependências Atualizadas
+Os tamanhos são validados no servidor, não apenas no navegador:
 
-Todas as dependências foram atualizadas para versões estáveis mais recentes:
+| Campo | Limite |
+|---|---|
+| Nome de usuário | 3 a 80 caracteres |
+| Senha | mínimo 6 caracteres |
+| Nome do grupo | 3 a 120 caracteres |
+| Descrição do grupo | até 500 caracteres |
+| Descrição do compromisso | 1 a 1.000 caracteres |
+| Título da anotação | até 200 caracteres |
+| Texto da anotação | até 50.000 caracteres |
 
-- **Flask**: 3.0.0 → 3.1.0
-- **Werkzeug**: 3.0.1 → 3.1.3
-- **gunicorn**: 21.2.0 → 23.0.0
-- **python-dotenv**: 1.0.0 → 1.0.1
+Os limites das anotações evitam que uma única requisição grave megabytes no
+banco.
 
-Novas dependências de segurança:
-- **argon2-cffi**: 23.1.0
-- **Flask-WTF**: 1.2.2
-- **Flask-Talisman**: 1.1.0
+### Cabeçalhos HTTP
 
-## 🚀 Configuração para Produção
+Com `FLASK_ENV=production`, o Flask-Talisman aplica:
 
-### 1. Variáveis de Ambiente
+- **HTTPS obrigatório** — acessos por HTTP são redirecionados
+- **HSTS** — o navegador passa a exigir HTTPS por conta própria
+- **Content Security Policy** — restringe de onde scripts, estilos, imagens e
+  fontes podem vir
+- **X-Frame-Options** — impede que a aplicação seja embutida em outro site
+- **X-Content-Type-Options** — impede adivinhação de tipo de conteúdo
 
-Copie `.env.example` para `.env` e configure:
+O Bootstrap é servido pela própria aplicação, sem CDN externa.
 
-```bash
-# Gere uma chave secreta forte
-python -c "import secrets; print(secrets.token_hex(32))"
+### Permissões
 
-# Configure no .env
-SECRET_KEY=sua-chave-secreta-gerada
+Alterar um compromisso ou anotação exige ser o autor **ou** o administrador
+daquele grupo. A marca de administrador do sistema, por si só, não dá acesso ao
+conteúdo de ninguém — ela apenas abre a área de administração.
+
+Cada administrador enxerga somente os próprios grupos e usuários. Detalhes em
+[docs/administracao.md](docs/administracao.md).
+
+### Injeção de SQL e XSS
+
+As consultas passam pelo SQLAlchemy com parâmetros vinculados, sem concatenação
+de texto. Os templates Jinja escapam a saída automaticamente, e nenhum ponto da
+aplicação desativa esse escape — inclusive nas anotações, que são texto livre.
+
+---
+
+## Configuração recomendada
+
+```env
+SECRET_KEY=<gere com secrets.token_hex(32)>
 FLASK_ENV=production
 SESSION_COOKIE_SECURE=True
 WTF_CSRF_SSL_STRICT=True
+CLIENT_IP_HEADER=CF-Connecting-IP   # ou X-Forwarded-For com nginx
 ```
 
-### 2. HTTPS
+### Lista de conferência
 
-**IMPORTANTE:** Em produção, sempre use HTTPS. Flask-Talisman forçará HTTPS quando `FLASK_ENV=production`.
-
-Configure seu servidor web (nginx, apache) para usar certificados SSL/TLS.
-
-### 3. Banco de Dados
-
-Para produção, use PostgreSQL ao invés de SQLite:
-
-```bash
-DATABASE_URL=postgresql://usuario:senha@localhost/nome_banco
-```
-
-## 🔍 Checklist de Segurança
-
-- [x] Hashing de senhas com Argon2
+- [x] Senhas com Argon2id
 - [x] Proteção CSRF em todos os formulários
-- [x] Headers de segurança HTTP
-- [x] Cookies seguros (HttpOnly, SameSite, Secure)
-- [x] Sessões com timeout
-- [x] Validação de dados no servidor
-- [x] Dependências atualizadas
-- [ ] HTTPS configurado (necessário em produção)
-- [ ] Firewall configurado
-- [ ] Backups regulares do banco de dados
-- [ ] Monitoramento de logs
+- [x] Limite de tentativas de login
+- [x] Cabeçalhos de segurança HTTP
+- [x] Cookies com HttpOnly, SameSite e Secure
+- [x] Sessão com expiração
+- [x] Validação de tamanho no servidor
+- [x] Dependências com versões fixadas
+- [ ] HTTPS na frente da aplicação — **necessário**, veja [docs/deploy.md](docs/deploy.md)
+- [ ] `CLIENT_IP_HEADER` configurado, se houver proxy
+- [ ] Firewall permitindo apenas o necessário
+- [ ] Backup periódico do banco
+- [ ] Dependências revisadas de tempos em tempos
 
-## 📚 Recursos Adicionais
+---
 
-- [Argon2 Documentation](https://argon2-cffi.readthedocs.io/)
-- [Flask-WTF Documentation](https://flask-wtf.readthedocs.io/)
-- [Flask-Talisman Documentation](https://github.com/GoogleCloudPlatform/flask-talisman)
-- [OWASP Top 10](https://owasp.org/www-project-top-ten/)
+## Cuidados na operação
 
-## ⚠️ Avisos Importantes
+**Nunca versione o `.env`.** Ele está no `.gitignore`; mantenha assim.
 
-1. **Nunca** commite o arquivo `.env` com chaves secretas
-2. **Sempre** use HTTPS em produção
-3. **Mantenha** as dependências atualizadas
-4. **Monitore** logs de segurança regularmente
-5. **Faça** backups regulares do banco de dados
+**Só configure `CLIENT_IP_HEADER` se a aplicação for inalcançável por fora do
+proxy.** Se a porta também estiver aberta na internet, o cabeçalho pode ser
+forjado para escapar do limite de tentativas.
 
-## 🗄️ Inicialização do Banco de Dados
+**Faça backup antes de atualizar.** O procedimento está em
+[docs/deploy.md](docs/deploy.md).
 
-Para inicializar o banco de dados com as novas configurações de segurança:
+**Revise as dependências periodicamente:**
 
 ```bash
-# Inicializar o banco de dados
-python init_db.py
-
-# Criar primeiro administrador
-python create_user.py
+pip list --outdated
 ```
 
-Todas as senhas serão armazenadas usando Argon2 desde o início.
+---
+
+## Limitações conhecidas
+
+**Sem recuperação de senha.** Quem esquece a senha depende de um administrador
+com acesso ao servidor (`create_user.py`, opção 3).
+
+Isso não vale para o limite de tentativas de login: aquele bloqueio expira
+sozinho, em até 1 minuto, 1 hora ou 24 horas conforme o limite atingido.
+
+**Contador de tentativas por processo.** Com o padrão `memory://`, cada worker
+do gunicorn mantém a própria contagem, então o limite efetivo é multiplicado
+pelo número de workers. Para um limite exato, use um Redis compartilhado em
+`RATELIMIT_STORAGE_URI`.
+
+**Sem registro de auditoria.** A aplicação não guarda histórico de quem alterou
+ou apagou o quê.
+
+**Banco SQLite.** É o único banco configurado e testado. Usar PostgreSQL exige
+acrescentar um driver (`psycopg`) ao `requirements.txt`, que não vem incluído.

@@ -10,7 +10,7 @@ Funcionalidades:
 Uso: python create_user.py
 """
 
-from app import app, db
+from app import app, db, criar_tabelas
 from models import User
 import getpass
 import sys
@@ -255,6 +255,16 @@ def show_menu():
 
 def main():
     """Função principal com menu interativo"""
+    # Garante que as tabelas existam. Sem isto, rodar este script antes de a
+    # aplicação ter subido alguma vez terminava em um traceback de "no such
+    # table" — situação comum, já que criar o primeiro administrador costuma
+    # ser a primeira coisa que se faz. É idempotente.
+    try:
+        criar_tabelas()
+    except Exception as e:
+        print(f"\n❌ Não foi possível preparar o banco de dados: {e}\n", file=sys.stderr)
+        sys.exit(1)
+
     while True:
         show_menu()
 

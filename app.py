@@ -1,14 +1,21 @@
 import os
+import sqlite3
 from flask import Flask, render_template, request, redirect, url_for, flash, session
+from sqlalchemy import event
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import joinedload
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from flask_wtf.csrf import CSRFProtect
 from flask_talisman import Talisman
 from flask_bootstrap import Bootstrap5
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from werkzeug.middleware.proxy_fix import ProxyFix
 from dotenv import load_dotenv
 from functools import wraps
 from models import db, User, Tarefa, TaskGroup, Note
 from forms import (LoginForm, CreateUserForm, TaskForm, EditTaskForm,
-                   TaskGroupForm, DeleteForm, ManageMemberForm)
+                   TaskGroupForm, DeleteForm, ManageMemberForm, NoteForm)
 from collections import defaultdict
 
 # Carregar variáveis de ambiente
@@ -50,12 +57,113 @@ app.config['WTF_CSRF_SSL_STRICT'] = env_bool('WTF_CSRF_SSL_STRICT')  # True em p
 # Configurações do Bootstrap-Flask
 app.config['BOOTSTRAP_SERVE_LOCAL'] = True  # Servir Bootstrap localmente ao invés de CDN
 
+# Confiança em proxies reversos
+#
+# Atrás de um proxy (nginx), request.remote_addr é o endereço do próprio proxy
+# e o IP real do visitante vem no cabeçalho X-Forwarded-For. Sem tratar isso, o
+# limite de tentativas de login contaria todo mundo em um balde só.
+#
+# O padrão é 0 de propósito: confiar no cabeçalho sem proxy na frente permitiria
+# a qualquer pessoa forjar X-Forwarded-For e escapar do limite trocando de IP a
+# cada tentativa. Defina TRUSTED_PROXY_COUNT=1 apenas quando houver de fato um
+# proxy repassando o cabeçalho.
+PROXIES_CONFIAVEIS = int(os.getenv('TRUSTED_PROXY_COUNT', '0'))
+if PROXIES_CONFIAVEIS > 0:
+    app.wsgi_app = ProxyFix(app.wsgi_app,
+                            x_for=PROXIES_CONFIAVEIS,
+                            x_proto=PROXIES_CONFIAVEIS,
+                            x_host=PROXIES_CONFIAVEIS)
+
+@event.listens_for(Engine, 'connect')
+def configurar_conexao_sqlite(conexao, _registro):
+    """
+    Ajusta cada conexão SQLite para suportar vários workers do gunicorn.
+
+    O SQLite aceita um escritor por vez. No modo padrão (journal DELETE) uma
+    escrita bloqueia também os leitores, e um segundo escritor falha na hora
+    com "database is locked" - situação provável com a gravação automática das
+    anotações disparando a cada pausa na digitação.
+
+    - WAL: leitores não são bloqueados por quem escreve, e vice-versa.
+    - busy_timeout: quem encontra o banco ocupado espera em vez de falhar.
+    - synchronous NORMAL: seguro sob WAL e bem mais rápido que FULL.
+
+    Não faz nada se o banco não for SQLite, então trocar para PostgreSQL
+    continua funcionando sem alteração.
+    """
+    if not isinstance(conexao, sqlite3.Connection):
+        return
+    cursor = conexao.cursor()
+    cursor.execute('PRAGMA journal_mode=WAL')
+    cursor.execute('PRAGMA busy_timeout=15000')
+    cursor.execute('PRAGMA synchronous=NORMAL')
+    cursor.close()
+
+
 # Inicializar extensões
 db.init_app(app)
 bootstrap = Bootstrap5(app)
 
 # Proteção CSRF
 csrf = CSRFProtect(app)
+
+# De onde vem o endereço do visitante
+#
+# Atrás de Cloudflare Tunnel, nginx ou qualquer proxy, todas as requisições
+# chegam do mesmo endereço local e o IP real do visitante vem em um cabeçalho.
+# Sem ler esse cabeçalho o limite de tentativas vira um balde único: bastaria
+# um atacante errar cinco vezes para trancar a aplicação para todo mundo.
+#
+# Cloudflare Tunnel : CLIENT_IP_HEADER=CF-Connecting-IP
+# nginx             : CLIENT_IP_HEADER=X-Forwarded-For
+#
+# Só configure quando a aplicação for de fato inalcançável por fora do proxy.
+# Se a porta puder ser acessada diretamente, qualquer pessoa forja o cabeçalho
+# e escapa do limite trocando de endereço a cada tentativa.
+CABECALHO_IP_CLIENTE = os.getenv('CLIENT_IP_HEADER', '').strip()
+
+
+def identificar_visitante():
+    """Endereço usado para contar as tentativas de login de cada visitante."""
+    if CABECALHO_IP_CLIENTE:
+        valor = request.headers.get(CABECALHO_IP_CLIENTE)
+        if valor:
+            # X-Forwarded-For chega como uma cadeia "cliente, proxy1, proxy2";
+            # o primeiro item é quem originou a requisição.
+            return valor.split(',')[0].strip()
+    return get_remote_address()
+
+
+# Limite de tentativas de login
+#
+# O armazenamento padrão é em memória, que é local a cada processo. Com o
+# gunicorn rodando 4 workers, cada um mantém a própria contagem e o limite
+# efetivo fica multiplicado pelo número de workers. Continua sendo muito melhor
+# que nada, mas para um limite exato configure RATELIMIT_STORAGE_URI apontando
+# para um Redis compartilhado.
+limiter = Limiter(
+    identificar_visitante,
+    app=app,
+    storage_uri=os.getenv('RATELIMIT_STORAGE_URI', 'memory://'),
+    strategy='fixed-window',
+)
+
+
+def login_falhou(resposta):
+    """
+    Só desconta do limite quando a tentativa falha.
+
+    Um login bem-sucedido responde com redirecionamento; assim quem acerta a
+    senha não gasta cota, e quem erra é quem vai sendo contido.
+    """
+    return resposta.status_code != 302
+
+
+# Quantas tentativas de login mal-sucedidas cada endereço pode fazer.
+# Como só o erro desconta, quem sabe a senha nunca esbarra nestes números.
+# Lembrando que não há recuperação de senha por conta própria: um usuário
+# trancado depende do administrador (create_user.py, opção 3).
+LIMITE_LOGIN = os.getenv('LOGIN_RATE_LIMIT', '3 per minute; 10 per hour; 25 per day')
 
 # Headers de segurança com Flask-Talisman (apenas em produção)
 if os.getenv('FLASK_ENV') == 'production':
@@ -82,7 +190,15 @@ login_manager.session_protection = 'strong'  # Proteção adicional de sessão
 
 @login_manager.user_loader
 def load_user(user_id):
-    return User.query.get(int(user_id))
+    return db.session.get(User, int(user_id))
+
+
+@app.errorhandler(429)
+def limite_de_tentativas_excedido(erro):
+    """Mostra o limite estourado na própria tela de login, com o visual do site."""
+    flash(getattr(erro, 'description', None)
+          or 'Muitas tentativas. Aguarde alguns minutos e tente novamente.', 'danger')
+    return render_template('login.html', form=LoginForm()), 429
 
 
 @app.before_request
@@ -124,6 +240,10 @@ def admin_required(f):
 # ============= ROTAS DE AUTENTICAÇÃO =============
 
 @app.route('/login', methods=['GET', 'POST'])
+@limiter.limit(LIMITE_LOGIN,
+               methods=['POST'],
+               deduct_when=login_falhou,
+               error_message='Muitas tentativas de login. Aguarde alguns minutos e tente novamente.')
 def login():
     if current_user.is_authenticated:
         return redirect(url_for('index'))
@@ -186,7 +306,11 @@ def index():
     selected_group_id = request.args.get('group_id', type=int)
 
     # Buscar todas as tarefas dos grupos que o usuário pertence
-    query = Tarefa.query.filter(Tarefa.task_group_id.in_(group_ids))
+    # joinedload traz autor e grupo na mesma consulta: a listagem mostra os dois
+    # em cada linha e, sem isto, cada compromisso gera duas consultas extras.
+    query = (Tarefa.query
+             .options(joinedload(Tarefa.usuario), joinedload(Tarefa.task_group))
+             .filter(Tarefa.task_group_id.in_(group_ids)))
 
     # Aplicar filtro de grupo se selecionado
     if selected_group_id:
@@ -204,7 +328,7 @@ def index():
     members_set = set()
     if selected_group_id:
         # Se um grupo está selecionado, mostrar apenas membros daquele grupo
-        selected_group = TaskGroup.query.get(selected_group_id)
+        selected_group = db.session.get(TaskGroup, selected_group_id)
         if selected_group:
             for member in selected_group.members.all():
                 members_set.add((member.id, member.username))
@@ -256,7 +380,7 @@ def adicionar():
 
     if form.validate_on_submit():
         # Verificar se o usuário pertence ao grupo
-        task_group = TaskGroup.query.get(form.task_group_id.data)
+        task_group = db.session.get(TaskGroup, form.task_group_id.data)
         if not task_group or task_group not in current_user.task_groups:
             flash('Você não pertence a este grupo de tarefas.', 'danger')
             return redirect(url_for('index'))
@@ -283,7 +407,7 @@ def adicionar():
 @app.route('/editar/<int:id>', methods=['GET', 'POST'])
 @login_required
 def editar(id):
-    tarefa = Tarefa.query.get_or_404(id)
+    tarefa = db.get_or_404(Tarefa, id)
 
     # Verificar permissões
     # O administrador do grupo pode editar qualquer tarefa dele
@@ -304,7 +428,7 @@ def editar(id):
 
     if form.validate_on_submit():
         # Verificar se o usuário pertence ao novo grupo
-        new_task_group = TaskGroup.query.get(form.task_group_id.data)
+        new_task_group = db.session.get(TaskGroup, form.task_group_id.data)
         if not new_task_group or new_task_group not in current_user.task_groups:
             flash('Você não pertence a este grupo de tarefas.', 'danger')
             return redirect(url_for('index'))
@@ -328,7 +452,7 @@ def deletar(id):
         flash('Token CSRF inválido.', 'danger')
         return redirect(url_for('index'))
 
-    tarefa = Tarefa.query.get_or_404(id)
+    tarefa = db.get_or_404(Tarefa, id)
 
     # Verificar permissões
     # O administrador do grupo pode deletar qualquer tarefa dele
@@ -372,7 +496,11 @@ def notas():
     selected_user_id = request.args.get('user_id', type=int)
 
     # Buscar todas as notas dos grupos que o usuário pertence
-    query = Note.query.filter(Note.task_group_id.in_(group_ids))
+    # Mesmo motivo da listagem de compromissos: a barra lateral mostra autor e
+    # grupo de cada anotação.
+    query = (Note.query
+             .options(joinedload(Note.usuario), joinedload(Note.task_group))
+             .filter(Note.task_group_id.in_(group_ids)))
 
     # Aplicar filtro de grupo se selecionado
     if selected_group_id and selected_group_id in group_ids:
@@ -388,7 +516,7 @@ def notas():
     members_set = set()
     if selected_group_id:
         # Se um grupo está selecionado, mostrar apenas membros daquele grupo
-        selected_group = TaskGroup.query.get(selected_group_id)
+        selected_group = db.session.get(TaskGroup, selected_group_id)
         if selected_group:
             for member in selected_group.members.all():
                 members_set.add((member.id, member.username))
@@ -402,7 +530,7 @@ def notas():
     # Buscar nota selecionada
     current_note = None
     if selected_note_id:
-        current_note = Note.query.get(selected_note_id)
+        current_note = db.session.get(Note, selected_note_id)
         # Verificar se o usuário tem acesso à nota
         if current_note and current_note.task_group_id not in group_ids:
             current_note = None
@@ -418,25 +546,27 @@ def notas():
 @login_required
 def criar_nota():
     """Criar nova nota"""
-    title = request.form.get('title', '').strip()
-    task_group_id = request.form.get('task_group_id', type=int)
+    form = NoteForm()
 
-    if not title:
-        flash('O título da nota não pode estar vazio.', 'danger')
+    if not form.validate_on_submit():
+        for erros in form.errors.values():
+            for erro in erros:
+                flash(erro, 'danger')
         return redirect(url_for('notas'))
 
+    task_group_id = request.form.get('task_group_id', type=int)
     if not task_group_id:
         flash('Você deve selecionar um grupo.', 'danger')
         return redirect(url_for('notas'))
 
     # Verificar se o usuário pertence ao grupo
-    task_group = TaskGroup.query.get(task_group_id)
+    task_group = db.session.get(TaskGroup, task_group_id)
     if not task_group or task_group not in current_user.task_groups:
         flash('Você não pertence a este grupo de tarefas.', 'danger')
         return redirect(url_for('notas'))
 
     note = Note(
-        title=title,
+        title=form.title.data.strip(),
         content='',
         user_id=current_user.id,
         task_group_id=task_group_id
@@ -452,7 +582,7 @@ def criar_nota():
 @login_required
 def atualizar_nota(id):
     """Atualizar conteúdo da nota - apenas o autor ou o administrador do grupo"""
-    note = Note.query.get_or_404(id)
+    note = db.get_or_404(Note, id)
 
     # Verificar se pertence ao grupo
     if note.task_group not in current_user.task_groups:
@@ -463,20 +593,24 @@ def atualizar_nota(id):
         return {'success': False,
                 'message': 'Apenas o autor ou o administrador do grupo podem editar esta nota.'}, 403
 
+    # A gravação automática dispara a cada pausa na digitação, então os limites
+    # de tamanho são verificados aqui antes de tocar no banco. A resposta é JSON
+    # porque quem chama é o autosave da tela de anotações.
+    form = NoteForm()
+    if not form.validate_on_submit():
+        primeiro_erro = next(iter(form.errors.values()))[0]
+        return {'success': False, 'message': primeiro_erro}, 400
+
     # Quem pode editar também pode mover a nota para outro dos seus grupos
     task_group_id = request.form.get('task_group_id', type=int)
     if task_group_id:
         # Verificar se o usuário pertence ao novo grupo
-        new_group = TaskGroup.query.get(task_group_id)
+        new_group = db.session.get(TaskGroup, task_group_id)
         if new_group and new_group in current_user.task_groups:
             note.task_group_id = task_group_id
 
-    content = request.form.get('content', '')
-    title = request.form.get('title', '').strip()
-
-    if title:
-        note.title = title
-    note.content = content
+    note.title = form.title.data.strip()
+    note.content = form.content.data or ''
     db.session.commit()
 
     return {
@@ -490,7 +624,13 @@ def atualizar_nota(id):
 @login_required
 def deletar_nota(id):
     """Deletar nota - o autor ou o administrador do grupo podem deletar"""
-    note = Note.query.get_or_404(id)
+    form = DeleteForm()
+
+    if not form.validate_on_submit():
+        flash('Token CSRF inválido.', 'danger')
+        return redirect(url_for('notas'))
+
+    note = db.get_or_404(Note, id)
 
     task_group = note.task_group
     if task_group not in current_user.task_groups:
@@ -564,7 +704,7 @@ def admin_create_group():
 @admin_required
 def admin_edit_group(id):
     """Editar grupo de tarefas"""
-    group = TaskGroup.query.get_or_404(id)
+    group = db.get_or_404(TaskGroup, id)
 
     # Verificar se o grupo pertence ao admin
     if group.admin_id != current_user.id:
@@ -594,7 +734,7 @@ def admin_delete_group(id):
         flash('Token CSRF inválido.', 'danger')
         return redirect(url_for('admin_dashboard'))
 
-    group = TaskGroup.query.get_or_404(id)
+    group = db.get_or_404(TaskGroup, id)
 
     # Verificar se o grupo pertence ao admin
     if group.admin_id != current_user.id:
@@ -613,7 +753,7 @@ def admin_delete_group(id):
 @admin_required
 def admin_group_members(id):
     """Gerenciar membros do grupo"""
-    group = TaskGroup.query.get_or_404(id)
+    group = db.get_or_404(TaskGroup, id)
 
     # Verificar se o grupo pertence ao admin
     if group.admin_id != current_user.id:
@@ -639,7 +779,7 @@ def admin_group_members(id):
             form.user_id.choices = [(u.id, u.username) for u in current_members]
 
         if form.validate_on_submit():
-            user = User.query.get(form.user_id.data)
+            user = db.session.get(User, form.user_id.data)
             if not user:
                 flash('Usuário não encontrado.', 'danger')
                 return redirect(url_for('admin_group_members', id=id))
@@ -690,15 +830,21 @@ def admin_create_user():
 
 # ============= INICIALIZAÇÃO =============
 
-def init_db():
-    """Cria as tabelas do banco de dados"""
+def criar_tabelas():
+    """
+    Cria as tabelas que ainda não existem. É seguro chamar de novo: o
+    create_all ignora as que já estão criadas.
+
+    Implementação única, usada tanto por `python app.py` quanto pelo script
+    init_db.py, que apenas acrescenta mensagens e tratamento de erro para uso
+    em linha de comando.
+    """
     with app.app_context():
         db.create_all()
-        print("Banco de dados inicializado!")
 
 
 if __name__ == '__main__':
-    init_db()
+    criar_tabelas()
     # O debugger do Werkzeug executa código arbitrário através do navegador,
     # portanto só é habilitado fora de produção. O bind padrão é 127.0.0.1
     # para não expor o servidor de desenvolvimento na rede; use

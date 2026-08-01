@@ -1,487 +1,227 @@
-# Gerenciador de Tarefas - Flask
+# Gerenciador de Compromissos
 
-Aplicação web colaborativa para gerenciamento de tarefas com sistema de grupos e autenticação.
+Aplicação web para equipes pequenas organizarem compromissos e anotações em
+grupos compartilhados. Cada grupo tem um administrador responsável, e os
+membros enxergam o que os colegas estão fazendo sem poder alterar o que não é
+deles.
+
+Feita em Flask com banco SQLite, roda inteira em um contêiner Docker.
+
+---
 
 ## Funcionalidades
 
-### Para Usuários Comuns
-- Sistema de login seguro com autenticação
-- Visualizar tarefas de todos os membros do grupo
-- Adicionar, editar e deletar suas próprias tarefas
-- Filtrar tarefas por usuário ou grupo
-- Ver quem criou cada tarefa
-- Interface responsiva e moderna
+### Compromissos
 
-### Para Administradores
-- Criar e gerenciar grupos de tarefas
-- Criar usuários comuns via interface web
-- Adicionar/remover membros dos grupos
-- Editar e deletar tarefas de qualquer usuário do grupo
-- Visualização em tempo real de membros e tarefas por grupo
+- Cada compromisso tem data, descrição, autor e grupo
+- A listagem agrupa por mês e mostra quem criou cada item
+- Filtros por grupo e por membro
+- Cada pessoa edita e apaga os próprios compromissos; o administrador do grupo
+  pode editar e apagar os de qualquer membro daquele grupo
 
-## Diferenciais
+### Anotações
 
-- **Grupos de Tarefas**: Organize equipes e compartilhe tarefas
-- **Permissões Granulares**: Controle sobre quem pode editar cada tarefa
-- **Filtros Inteligentes**: Por usuário e por grupo
-- **Interface Intuitiva**: Design limpo e fácil de usar
-- **Banco de Dados SQLite**: Leve e sem necessidade de servidor externo
+- Editor de texto livre, uma aba própria ao lado dos compromissos
+- **Gravação automática**: o texto é salvo cerca de 1,5 segundo depois que você
+  para de digitar, sem precisar clicar em nada
+- Anotações de outras pessoas aparecem em modo somente leitura
+- É possível mover uma anotação para outro grupo seu
+- Mesma regra de edição dos compromissos: autor ou administrador do grupo
+
+### Grupos e usuários
+
+- Um usuário pode participar de **vários grupos** ao mesmo tempo
+- O administrador cria grupos, cria usuários e define quem entra em cada grupo
+- Cada administrador enxerga e gerencia apenas os próprios grupos e usuários
+
+---
+
+## Como funcionam as permissões
+
+Existem dois papéis, e a diferença entre eles costuma gerar confusão:
+
+| Papel | O que define | O que permite |
+|---|---|---|
+| **Administrador do sistema** | Campo `is_admin`, ligado só pelo `create_user.py` | Entrar na área de administração para criar grupos e usuários |
+| **Administrador do grupo** | Quem criou aquele grupo | Editar e apagar todo o conteúdo **daquele** grupo |
+
+O ponto importante: **poder sobre conteúdo vem de ser dono do grupo, não da
+flag de administrador**. Quem não criou o grupo se comporta ali como qualquer
+membro — vê tudo, mas só altera o que é dele.
+
+Os administradores também ficam isolados entre si: cada um enxerga apenas os
+próprios grupos e os usuários que cadastrou, e não consegue adicionar outro
+administrador aos seus grupos.
+
+Detalhes completos em [docs/administracao.md](docs/administracao.md).
+
+---
 
 ## Tecnologias
 
-- **Flask** - Framework web
-- **Jinja2** - Template engine
-- **Flask-Login** - Autenticação
-- **SQLAlchemy** - ORM para banco de dados
-- **Docker** - Containerização
-- **Gunicorn** - Servidor WSGI para produção
+| Componente | Para quê |
+|---|---|
+| **Flask** + **Jinja2** | Framework web e templates |
+| **Flask-SQLAlchemy** | ORM sobre o banco SQLite |
+| **Flask-Login** | Sessão e autenticação |
+| **argon2-cffi** | Hash das senhas (Argon2id) |
+| **Flask-WTF** | Proteção CSRF e validação de formulários |
+| **Flask-Talisman** | Cabeçalhos de segurança HTTP em produção |
+| **Flask-Limiter** | Limite de tentativas de login |
+| **Bootstrap-Flask** | Bootstrap 5 servido localmente, sem CDN |
+| **Gunicorn** | Servidor de produção |
+| **Docker** | Empacotamento e execução |
 
-## Início Rápido
+Versões exatas, incluindo as transitivas, estão fixadas em `requirements.txt`.
 
-### Pré-requisitos
+---
 
-- Python 3.8 ou superior
-- pip (gerenciador de pacotes Python)
+## Início rápido (desenvolvimento local)
 
-### Instalação Local
+Requer **Python 3.10 ou superior** (o contêiner usa 3.13).
 
 ```bash
-# 1. Clone o repositório
-git clone https://github.com/seu-usuario/agenda-tarefas.git
-cd agenda-tarefas
-
-# 2. Instale as dependências
+# 1. Dependências
+python3 -m venv venv
+source venv/bin/activate          # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
-# 3. Inicie a aplicação (o banco é criado automaticamente)
-python app.py
-
-# 4. Em outro terminal, crie o primeiro administrador
-python create_user.py
+# 2. Configuração
+cp .env.example .env
 ```
 
-Acesse: http://localhost:5000
+Abra o `.env` e faça dois ajustes.
 
-### Primeiros Passos
+**Primeiro, defina uma `SECRET_KEY`.** Ela vem vazia de propósito, e a
+aplicação recusa iniciar assim — é a chave que assina os cookies de sessão, e
+um valor previsível permitiria a qualquer pessoa forjar uma sessão de
+administrador.
 
-1. **Login** com o usuário administrador criado
-2. Acesse **Administração** no header
-3. **Crie um Grupo de Tarefas** (ex: "Equipe de Desenvolvimento")
-4. **Adicione-se como membro** do grupo
-5. Volte para a página principal e **crie sua primeira tarefa**!
-
-Veja documentação completa em [GRUPOS_README.md](GRUPOS_README.md)
-
----
-
-## Estrutura do Projeto
-
-```
-agenda-tarefas/
-├── app.py                    # Aplicação principal Flask
-├── models.py                 # Modelos do banco de dados (User, TaskGroup, Tarefa)
-├── create_user.py            # Script para criar usuários (admin via CLI)
-├── init_db.py               # Script de inicialização do banco
-├── templates/                # Templates Jinja2
-│   ├── base.html            # Template base
-│   ├── login.html           # Página de login
-│   ├── index.html           # Lista de tarefas (com filtros)
-│   ├── editar.html          # Edição de tarefa
-│   └── admin/               # Templates de administração
-│       ├── dashboard.html   # Painel de controle
-│       ├── create_group.html
-│       ├── edit_group.html
-│       ├── group_members.html
-│       └── create_user.html
-├── instance/                 # Banco de dados SQLite (criado automaticamente)
-├── requirements.txt          # Dependências Python
-├── Dockerfile                # Configuração Docker
-├── docker-compose.yml        # Orquestração Docker
-├── README.md                 # Este arquivo
-└── GRUPOS_README.md          # Documentação do sistema de grupos
-```
-
----
-
-## Deploy no VPS com Docker Compose
-
-### Pré-requisitos no VPS
-
-1. **Docker** instalado
-2. **Docker Compose** instalado
-3. **Git** (opcional, para clonar repositório)
-
-### Passo 1: Instalar Docker e Docker Compose (se necessário)
-
-```bash
-# Atualizar sistema
-sudo apt update && sudo apt upgrade -y
-
-# Instalar Docker
-curl -fsSL https://get.docker.com -o get-docker.sh
-sudo sh get-docker.sh
-
-# Adicionar usuário ao grupo docker (opcional, evita usar sudo)
-sudo usermod -aG docker $USER
-newgrp docker
-
-# Instalar Docker Compose
-sudo apt install docker-compose -y
-
-# Verificar instalação
-docker --version
-docker-compose --version
-```
-
-### Passo 2: Transferir arquivos para o VPS
-
-**Opção A: Via Git**
-```bash
-# No VPS
-cd /home/seu-usuario
-git clone https://seu-repositorio.git
-cd flask_app
-```
-
-### Passo 3: Configurar variáveis de ambiente
-
-```bash
-# No VPS, dentro da pasta flask_app/
-cd /home/usuario/flask_app
-
-# Criar arquivo .env
-nano .env
-```
-
-Conteúdo do arquivo `.env`:
-```env
-SECRET_KEY=sua-chave-secreta-muito-segura-aqui-gere-uma-aleatoria
-DATABASE_URL=sqlite:///data/tarefas.db
-FLASK_ENV=production
-
-# Configurar UID/GID para evitar permissões de root no diretório data/
-UID=1000
-GID=1000
-```
-
-**Dica para gerar SECRET_KEY segura:**
 ```bash
 python3 -c 'import secrets; print(secrets.token_hex(32))'
 ```
 
-**Dica para obter seu UID e GID:**
-```bash
-# Ver seu UID
-id -u
+**Depois, troque para o modo de desenvolvimento.** O modelo vem configurado
+para produção, que exige HTTPS:
 
-# Ver seu GID
-id -g
+```env
+FLASK_ENV=development
+SESSION_COOKIE_SECURE=False
+WTF_CSRF_SSL_STRICT=False
 ```
 
-### Passo 4: Criar diretório para dados
-
-**IMPORTANTE:** Crie o diretório `data/` ANTES de rodar o Docker para evitar que seja criado como root:
-
-```bash
-# Criar diretório com as permissões corretas
-mkdir -p data
-```
-
-Isso garante que o diretório seja criado com as permissões do seu usuário. Se você não criar antes, o Docker criará automaticamente como root e o container ficará em loop de restart.
-
-### Passo 5: Build e executar com Docker Compose
+Sem isso, o navegador é redirecionado para HTTPS e o cookie de sessão não é
+enviado, impedindo o login em `http://localhost`.
 
 ```bash
-# Build da imagem
-docker-compose build
-
-# Iniciar a aplicação
-docker-compose up -d
-
-# Verificar se está rodando
-docker-compose ps
-docker-compose logs -f
-```
-
-### Passo 6: Acessar a aplicação
-
-A aplicação estará rodando em: `http://ip-do-seu-vps:5000`
-
-**Exemplo:** `http://192.168.1.100:5000`
-
----
-
-## Configurar Nginx como Reverse Proxy (Opcional, mas recomendado)
-
-Para usar um domínio e HTTPS:
-
-### Instalar Nginx
-
-```bash
-sudo apt install nginx -y
-```
-
-### Configurar site
-
-```bash
-sudo nano /etc/nginx/sites-available/tarefas
-```
-
-Conteúdo:
-```nginx
-server {
-    listen 80;
-    server_name seu-dominio.com www.seu-dominio.com;
-
-    location / {
-        proxy_pass http://127.0.0.1:5000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
-
-### Ativar site
-
-```bash
-sudo ln -s /etc/nginx/sites-available/tarefas /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl restart nginx
-```
-
-### Configurar HTTPS com Let's Encrypt (Opcional)
-
-```bash
-# Instalar Certbot
-sudo apt install certbot python3-certbot-nginx -y
-
-# Obter certificado SSL
-sudo certbot --nginx -d seu-dominio.com -d www.seu-dominio.com
-
-# Renovação automática (já configurado automaticamente)
-sudo certbot renew --dry-run
-```
-
----
-
-## Comandos Úteis
-
-### Gerenciar containers
-
-```bash
-# Ver logs
-docker-compose logs -f
-
-# Parar aplicação
-docker-compose stop
-
-# Iniciar aplicação
-docker-compose start
-
-# Reiniciar aplicação
-docker-compose restart
-
-# Parar e remover containers
-docker-compose down
-
-# Rebuild após alterações no código
-docker-compose down
-docker-compose build
-docker-compose up -d
-```
-
-### Backup do banco de dados
-
-```bash
-# Fazer backup
-cp data/tarefas.db data/tarefas_backup_$(date +%Y%m%d).db
-
-# Ou compactar
-tar -czf backup_$(date +%Y%m%d).tar.gz data/
-```
-
-### Ver logs da aplicação
-
-```bash
-docker-compose logs -f web
-```
-
-### Acessar container (debug)
-
-```bash
-docker-compose exec web /bin/bash
-```
-
----
-
-## Desenvolvimento Local
-
-### Sem Docker
-
-```bash
-# Criar ambiente virtual
-python3 -m venv venv
-source venv/bin/activate  # No Windows: venv\Scripts\activate
-
-# Instalar dependências
-pip install -r requirements.txt
-
-# Executar aplicação
+# 3. Iniciar (as tabelas são criadas automaticamente)
 python app.py
+
+# 4. Em outro terminal, criar o primeiro administrador
+python create_user.py     # escolha a opção 1
 ```
 
-Acesse: http://localhost:5000
+Acesse **http://localhost:5000** e entre com o administrador criado.
 
-### Com Docker
+> Por segurança o servidor de desenvolvimento escuta apenas em `localhost`.
+> Para acessar de outra máquina na rede, use `FLASK_RUN_HOST=0.0.0.0`.
 
-```bash
-docker-compose up
-```
+### Primeiros passos na interface
 
-Acesse: http://localhost:5000
+1. Entre com o administrador
+2. Clique em **Administração** no topo
+3. Crie um **grupo** (o nome precisa ter ao menos 3 caracteres)
+4. Crie os **usuários** da equipe
+5. Em **Gerenciar Membros**, adicione os usuários ao grupo — e **adicione-se
+   também**: só quem é membro enxerga o conteúdo
+6. Volte para a página principal e crie o primeiro compromisso
 
 ---
 
-## Solução de Problemas
+## Documentação
 
-### Container em loop de restart (problema de permissões)
-
-**Sintoma:** O container fica reiniciando continuamente e o diretório `data/` foi criado como root.
-
-**Causa:** O diretório `data/` não foi criado antes de rodar o docker-compose, então o Docker criou como root.
-
-**Solução:**
-```bash
-# 1. Parar containers
-docker-compose down
-
-# 2. Remover tudo para recomeçar do zero
-sudo rm -rf data/
-
-# 3. Criar diretório com permissões corretas
-mkdir -p data
-
-# 4. Garantir que UID/GID estão no .env (use seus valores!)
-echo "UID=$(id -u)" >> .env
-echo "GID=$(id -g)" >> .env
-
-# 5. Rebuild e iniciar
-docker-compose build
-docker-compose up -d
-```
-
-### Container não inicia
-
-```bash
-# Ver logs detalhados
-docker-compose logs
-
-# Verificar se a porta 5000 está em uso
-sudo netstat -tulpn | grep 5000
-
-# Reiniciar do zero
-docker-compose down -v
-docker-compose up -d
-```
-
-### Banco de dados corrompido
-
-```bash
-# Parar aplicação
-docker-compose down
-
-# Remover banco (ATENÇÃO: perde todos os dados)
-rm data/tarefas.db
-
-# Reiniciar
-docker-compose up -d
-```
-
-### Permissões no diretório data/
-
-**O diretório `data/` é criado automaticamente com as permissões corretas do seu usuário!**
-
-A aplicação está configurada para usar as variáveis `UID` e `GID` do arquivo `.env`, evitando que os arquivos sejam criados como root.
-
-**Se você está tendo problemas com permissões ou loop de restart**, veja a seção [Container em loop de restart](#container-em-loop-de-restart-problema-de-permissões) acima.
+| Documento | Conteúdo |
+|---|---|
+| [docs/deploy.md](docs/deploy.md) | Publicar em um VPS: Docker, Cloudflare Tunnel, nginx, variáveis de ambiente, backup e problemas comuns |
+| [docs/administracao.md](docs/administracao.md) | Gerenciar usuários e grupos, o script `create_user.py`, e o modelo de permissões em detalhe |
+| [SECURITY.md](SECURITY.md) | Proteções implementadas e como relatar uma vulnerabilidade |
 
 ---
 
-## Segurança
+## Estrutura do projeto
 
-### Recomendações importantes:
-
-1. **Sempre altere a SECRET_KEY** no arquivo `.env`
-2. **Use HTTPS** em produção (Nginx + Let's Encrypt)
-3. **Configure firewall** para permitir apenas portas necessárias
-4. **Backup regular** do banco de dados
-5. **Atualize dependências** regularmente: `pip list --outdated`
-
-### Configurar Firewall (UFW)
-
-```bash
-# Permitir SSH
-sudo ufw allow 22/tcp
-
-# Permitir HTTP e HTTPS (se usar Nginx)
-sudo ufw allow 80/tcp
-sudo ufw allow 443/tcp
-
-# Se NÃO usar Nginx, permitir porta 5000
-sudo ufw allow 5000/tcp
-
-# Ativar firewall
-sudo ufw enable
 ```
+agenda-tarefas/
+├── app.py                    # Aplicação Flask: rotas e configuração
+├── models.py                 # Modelos (User, TaskGroup, Tarefa, Note)
+├── forms.py                  # Formulários e regras de validação
+├── create_user.py            # Gerenciamento de usuários pela linha de comando
+├── init_db.py                # Criação das tabelas (usado na subida do contêiner)
+├── templates/
+│   ├── base.html             # Layout, cabeçalho e abas
+│   ├── login.html
+│   ├── index.html            # Compromissos
+│   ├── notas.html            # Anotações
+│   ├── editar.html           # Edição de compromisso
+│   └── admin/                # Painel de administração
+│       ├── dashboard.html
+│       ├── create_group.html
+│       ├── edit_group.html
+│       ├── group_members.html
+│       └── create_user.html
+├── docs/                     # Documentação detalhada
+├── instance/                 # Banco SQLite ao rodar localmente
+├── data/                     # Banco SQLite ao rodar em contêiner
+├── requirements.txt          # Dependências com versões fixadas
+├── Dockerfile
+├── docker-compose.yml
+└── .env.example              # Modelo de configuração
+```
+
+> As duas pastas do banco não são redundância. Rodando local, o caminho padrão
+> é relativo e o Flask-SQLAlchemy o resolve dentro de `instance/`. No contêiner,
+> o `docker-compose.yml` fixa o caminho absoluto `/app/data/tarefas.db`, que é a
+> pasta persistida em volume. Ambas são criadas sozinhas no primeiro uso, e
+> apenas uma delas é usada de cada vez.
 
 ---
 
-## Atualizar a aplicação
+## Limites de tamanho
 
-```bash
-# 1. Fazer backup
-cp data/tarefas.db data/backup.db
+Valores recusados pelos formulários, com mensagem na própria tela:
 
-# 2. Parar aplicação
-docker-compose down
-
-# 3. Atualizar código (git pull ou upload de arquivos)
-git pull  # se usar git
-
-# 4. Rebuild e reiniciar
-docker-compose build
-docker-compose up -d
-
-# 5. Verificar logs
-docker-compose logs -f
-```
+| Campo | Limite |
+|---|---|
+| Nome de usuário | 3 a 80 caracteres |
+| Senha | mínimo 6 caracteres |
+| Nome do grupo | 3 a 120 caracteres |
+| Descrição do grupo | até 500 caracteres |
+| Descrição do compromisso | 1 a 1.000 caracteres |
+| Título da anotação | até 200 caracteres |
+| Texto da anotação | até 50.000 caracteres |
 
 ---
 
-## Monitoramento
+## Rotas
 
-### Ver uso de recursos
+| Rota | Método | Função |
+|---|---|---|
+| `/login` | GET, POST | Entrada no sistema |
+| `/logout` | GET | Encerrar sessão |
+| `/` | GET | Compromissos, com filtros |
+| `/adicionar` | POST | Criar compromisso |
+| `/editar/<id>` | GET, POST | Editar compromisso |
+| `/deletar/<id>` | POST | Apagar compromisso |
+| `/notas` | GET | Anotações |
+| `/notas/criar` | POST | Criar anotação |
+| `/notas/<id>/atualizar` | POST | Gravação automática |
+| `/notas/<id>/deletar` | POST | Apagar anotação |
+| `/admin` | GET | Painel de administração |
+| `/admin/groups/create` | GET, POST | Criar grupo |
+| `/admin/groups/<id>/edit` | GET, POST | Editar grupo |
+| `/admin/groups/<id>/delete` | POST | Apagar grupo |
+| `/admin/groups/<id>/members` | GET, POST | Gerenciar membros |
+| `/admin/users/create` | GET, POST | Criar usuário |
 
-```bash
-docker stats
-```
-
-### Auto-restart em caso de falha
-
-Já configurado no `docker-compose.yml`:
-```yaml
-restart: unless-stopped
-```
-
----
-
-## Suporte
-
-Criado com Flask, Jinja2 e muito amor!
-
-Para dúvidas, consulte a documentação oficial:
-- [Flask](https://flask.palletsprojects.com/)
-- [Docker](https://docs.docker.com/)
-- [Docker Compose](https://docs.docker.com/compose/)
+Todas exigem sessão iniciada, exceto `/login`. As rotas sob `/admin` exigem
+`is_admin`.

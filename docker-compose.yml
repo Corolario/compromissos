@@ -9,18 +9,17 @@ services:
     volumes:
       # Persistir banco de dados
       - ./data:/app/data
+    # Toda a configuração vem do .env, que é a única fonte. Copie o
+    # .env.example, que já vem com valores de produção, e ajuste o que precisar.
+    # O compose falha se o arquivo não existir.
+    env_file: .env
     environment:
-      # Sem valor padrão de propósito: uma SECRET_KEY conhecida permite forjar
-      # sessões e entrar como qualquer usuário. O compose falha se não estiver
-      # definida no .env.
-      - "SECRET_KEY=${SECRET_KEY:?defina SECRET_KEY no arquivo .env - gere com python3 -c 'import secrets; print(secrets.token_hex(32))'}"
+      # Única exceção: este caminho descreve a estrutura da imagem, não uma
+      # escolha de quem instala. É absoluto e aponta para o volume montado em
+      # data/; um caminho relativo cairia em /app/instance e os dados se
+      # perderiam ao recriar o contêiner. Definido aqui, prevalece sobre o
+      # DATABASE_URL do .env, que serve para rodar fora do contêiner.
       - DATABASE_URL=sqlite:////app/data/tarefas.db
-      - FLASK_ENV=${FLASK_ENV:-production}
-      # Em produção o Flask-Talisman já força HTTPS, então os cookies e a
-      # validação de origem do CSRF assumem TLS. Ajuste no .env apenas se
-      # estiver rodando sem HTTPS.
-      - SESSION_COOKIE_SECURE=${SESSION_COOKIE_SECURE:-True}
-      - WTF_CSRF_SSL_STRICT=${WTF_CSRF_SSL_STRICT:-True}
     healthcheck:
       # A imagem python:slim não traz curl; usa-se o próprio Python.
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/login')"]
