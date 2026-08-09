@@ -325,8 +325,16 @@ def index():
     tarefas = query.order_by(Tarefa.data).all()
 
     # Buscar todos os membros dos grupos para o filtro
+    #
+    # O `in group_ids` é a mesma condição já aplicada à consulta acima, e é
+    # indispensável aqui: sem ela bastava trocar o group_id na URL para receber
+    # o nome e o id dos membros de qualquer grupo do sistema, inclusive de
+    # grupos de outros administradores. O conteúdo continuava protegido, mas a
+    # composição das equipes vazava inteira. Um group_id de fora agora cai no
+    # else e a tela se comporta como se nenhum filtro tivesse sido pedido,
+    # exatamente como a consulta de tarefas já fazia.
     members_set = set()
-    if selected_group_id:
+    if selected_group_id and selected_group_id in group_ids:
         # Se um grupo está selecionado, mostrar apenas membros daquele grupo
         selected_group = db.session.get(TaskGroup, selected_group_id)
         if selected_group:
@@ -513,8 +521,13 @@ def notas():
     notes = query.order_by(Note.updated_at.desc()).all()
 
     # Buscar todos os membros dos grupos para o filtro
+    #
+    # Mesma correção da listagem de compromissos: sem o `in group_ids` esta
+    # tela também entregava os membros de qualquer grupo a quem trocasse o
+    # group_id na URL. A consulta de anotações acima já fazia a verificação; era
+    # só este bloco que ficou de fora.
     members_set = set()
-    if selected_group_id:
+    if selected_group_id and selected_group_id in group_ids:
         # Se um grupo está selecionado, mostrar apenas membros daquele grupo
         selected_group = db.session.get(TaskGroup, selected_group_id)
         if selected_group:
