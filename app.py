@@ -1,5 +1,6 @@
 import os
 import sqlite3
+from urllib.parse import urlparse
 from flask import Flask, render_template, request, redirect, url_for, flash, session
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
@@ -239,6 +240,37 @@ def admin_required(f):
 
 # ============= ROTAS DE AUTENTICAÇÃO =============
 
+def destino_seguro(destino):
+    """
+    Valida o ?next= do login e devolve None se ele não for um caminho interno.
+
+    Sem esta conferência, ?next=https://site-falso.example manda o usuário
+    recém-autenticado para fora do site. O golpe é justamente esse: a vítima
+    entra de verdade aqui, é jogada em uma tela de login falsa e digita a senha
+    de novo achando que a primeira tentativa não pegou.
+
+    Só passa caminho interno começando por uma barra. São recusados:
+
+    - URL absoluta ("https://outro.example/"), pelo esquema ou pelo netloc;
+    - protocolo-relativa ("//outro.example/"), que o navegador resolve como
+      absoluta mesmo sem esquema;
+    - as duas formas que o navegador normaliza antes de resolver: a barra
+      invertida ("/\\outro.example") e a tabulação ou quebra de linha no meio
+      ("/\\t/outro.example"), ambas descartadas pelo navegador e reduzidas ao
+      caso anterior. Recusar sai mais barato do que tentar limpar.
+    """
+    if not destino or not destino.startswith('/'):
+        return None
+    if destino.startswith('//') or '\\' in destino:
+        return None
+    if any(caractere in destino for caractere in '\t\r\n'):
+        return None
+    partes = urlparse(destino)
+    if partes.scheme or partes.netloc:
+        return None
+    return destino
+
+
 @app.route('/login', methods=['GET', 'POST'])
 @limiter.limit(LIMITE_LOGIN,
                methods=['POST'],
@@ -265,7 +297,7 @@ def login():
                 user.set_password(form.password.data)
                 db.session.commit()
             login_user(user)
-            next_page = request.args.get('next')
+            next_page = destino_seguro(request.args.get('next'))
             return redirect(next_page) if next_page else redirect(url_for('index'))
         else:
             flash('Usuário ou senha incorretos.', 'danger')
@@ -305,6 +337,13 @@ def index():
     selected_user_id = request.args.get('user_id', type=int)
     selected_group_id = request.args.get('group_id', type=int)
 
+    # Um group_id de grupo alheio é descartado aqui, uma vez só. Antes cada uso
+    # conferia a participação por conta própria — e a lista de membros mais
+    # abaixo não conferia: bastava passar ?group_id= de um grupo de outro
+    # administrador para receber os nomes dos usuários dele.
+    if selected_group_id not in group_ids:
+        selected_group_id = None
+
     # Buscar todas as tarefas dos grupos que o usuário pertence
     # joinedload traz autor e grupo na mesma consulta: a listagem mostra os dois
     # em cada linha e, sem isto, cada compromisso gera duas consultas extras.
@@ -314,9 +353,7 @@ def index():
 
     # Aplicar filtro de grupo se selecionado
     if selected_group_id:
-        # Verificar se o usuário pertence a este grupo
-        if selected_group_id in group_ids:
-            query = query.filter(Tarefa.task_group_id == selected_group_id)
+        query = query.filter(Tarefa.task_group_id == selected_group_id)
 
     # Aplicar filtro de usuário se selecionado
     if selected_user_id:
@@ -495,6 +532,11 @@ def notas():
     selected_note_id = request.args.get('note_id', type=int)
     selected_user_id = request.args.get('user_id', type=int)
 
+    # Mesmo descarte feito na listagem de compromissos: sem ele, a lista de
+    # membros montada mais abaixo expõe os usuários de grupos alheios.
+    if selected_group_id not in group_ids:
+        selected_group_id = None
+
     # Buscar todas as notas dos grupos que o usuário pertence
     # Mesmo motivo da listagem de compromissos: a barra lateral mostra autor e
     # grupo de cada anotação.
@@ -503,7 +545,7 @@ def notas():
              .filter(Note.task_group_id.in_(group_ids)))
 
     # Aplicar filtro de grupo se selecionado
-    if selected_group_id and selected_group_id in group_ids:
+    if selected_group_id:
         query = query.filter(Note.task_group_id == selected_group_id)
 
     # Aplicar filtro de usuário se selecionado
