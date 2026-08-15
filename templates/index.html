@@ -159,6 +159,24 @@
             padding-bottom: 0.4rem;
         }
 
+        /* --- Realce do hover na linha inteira ---
+           O .table-hover pinta o realce célula a célula, com box-shadow inset
+           em "> tbody > tr:hover > *". Na linha remontada em grid isso sai
+           esburacado: as folgas entre colunas, o padding do <tr> e o espaço
+           acima e abaixo das células mais baixas ficam sem pintar. Aqui o
+           realce vira fundo do próprio <tr>, que cobre tudo de uma vez. */
+        .tabela-compromissos.table-hover > tbody > tr:hover {
+            background-color: var(--bs-table-hover-bg, rgba(0, 0, 0, 0.075));
+        }
+        /* Toda célula pinta background-color: var(--bs-table-bg), que no
+           .table é o branco do corpo. Sem zerar isto, as células cobrem de
+           branco o fundo do <tr> e o realce sai em faixas. Vale também para a
+           data, que aqui tem fundo próprio e viraria uma mancha clara. */
+        .tabela-compromissos.table-hover > tbody > tr:hover > * {
+            box-shadow: none;
+            --bs-table-bg: transparent;
+        }
+
         /* --- Data com o mesmo fundo do cabeçalho (só no mobile) ---
            Mesmo tom do .table-light aplicado ao <thead>. Vai na variável do
            Bootstrap, e não em background-color direto, porque o .table-hover
