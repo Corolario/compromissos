@@ -617,7 +617,9 @@ def criar_nota():
     db.session.commit()
 
     flash('Nota criada com sucesso!', 'success')
-    return redirect(url_for('notas', note_id=note.id, group_id=task_group_id))
+    # Volta sem filtro nenhum. Antes daqui saía group_id=<grupo da nota>, e
+    # criar uma nota trocava silenciosamente o filtro da tela pelo grupo dela.
+    return redirect(url_for('notas', note_id=note.id))
 
 
 @app.route('/notas/<int:id>/atualizar', methods=['POST'])
@@ -684,11 +686,12 @@ def deletar_nota(id):
         flash('Apenas o criador da nota ou o administrador do grupo podem deletá-la.', 'danger')
         return redirect(url_for('notas'))
 
-    group_id = note.task_group_id
     db.session.delete(note)
     db.session.commit()
     flash('Nota deletada com sucesso!', 'success')
-    return redirect(url_for('notas', group_id=group_id))
+    # Mesmo motivo do criar_nota: sai sem filtro, em vez de deixar a tela
+    # filtrada pelo grupo da nota que acabou de ser apagada.
+    return redirect(url_for('notas'))
 
 
 # ============= ROTAS DE ADMINISTRAÇÃO =============
