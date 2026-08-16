@@ -178,6 +178,19 @@
             display: none;
         }
 
+        /* --- Filtros somem junto com a lista ---
+           Com o editor em tela cheia a lista está oculta, então o filtro não
+           tem o que filtrar: fica só empurrando o editor para baixo. Some por
+           CSS, e não deixando de renderizar o markup, porque o selectNote() lê
+           o valor de #group_filter para preservar o grupo ao abrir uma nota —
+           tirar os campos do DOM quebraria isso.
+
+           O !important vence o .d-flex do Bootstrap, que também usa
+           !important; mesmo motivo do align-items logo abaixo. */
+        .filter-bar.nota-aberta {
+            display: none !important;
+        }
+
         /* --- Botão voltar visível no mobile --- */
         .mobile-back-btn {
             display: inline-block;
@@ -318,7 +331,7 @@
 
 <!-- Filtros e Botão Nova Nota -->
 {% if user_groups %}
-<div class="filter-bar d-flex flex-wrap gap-2 align-items-center mb-4 p-3 bg-light rounded">
+<div class="filter-bar {% if current_note %}nota-aberta{% endif %} d-flex flex-wrap gap-2 align-items-center mb-4 p-3 bg-light rounded">
     <!-- Filtro de Grupo -->
     {% if user_groups|length > 1 %}
     <div class="d-flex align-items-center gap-2">
