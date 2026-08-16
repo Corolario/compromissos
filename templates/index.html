@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from 'bootstrap5/utils.html' import render_icon %}
 
 {% block title %}Compromissos{% endblock %}
 
@@ -9,6 +10,204 @@
 {% endblock %}
 
 {% block content %}
+<style>
+    /* Min-width dos filtros no desktop — saiu do style= de cada <select>
+       para o mobile poder sobrepor. Mesmo valor e mesma classe do notas.html. */
+    .filter-bar .form-select-sm {
+        min-width: 200px;
+    }
+
+    /* ========== LÁPIS: as duas larguras ==========
+       Sem moldura e sem texto, mas com área de toque de 40px: o ícone tem
+       ~1em e sozinho daria um alvo pequeno demais para o dedo, então o mínimo
+       vem do botão, não do desenho do ícone. Centralizado sob o rótulo
+       "Editar", que agora encabeça uma coluna de ícone. */
+    .tabela-compromissos .botao-editar,
+    .tabela-compromissos .botao-editar:hover,
+    .tabela-compromissos .botao-editar:focus,
+    .tabela-compromissos .botao-editar:active {
+        border-color: transparent;
+        background-color: transparent;
+        color: var(--bs-primary, #0d6efd);
+        box-shadow: none;
+    }
+
+    .tabela-compromissos .botao-editar {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 2.5rem;
+        min-height: 2.5rem;
+        padding: 0;
+        font-size: 1.15rem;
+    }
+
+    .tabela-compromissos th:nth-child(5),
+    .tabela-compromissos td:nth-child(5) {
+        text-align: center;
+    }
+
+    /* ========== DESKTOP: >= 768px ==========
+       Estas larguras estavam em style= dentro de cada <th>. Saíram de lá
+       porque estilo inline vence a folha de estilo: no mobile o <th> era
+       forçado a 100px dentro de uma faixa estreita do grid e transbordava,
+       cortando o rótulo da última coluna na borda da tela. */
+    @media (min-width: 768px) {
+        .tabela-compromissos th:nth-child(1) { width: 100px; }
+        .tabela-compromissos th:nth-child(3) { width: 120px; }  /* Dono  */
+        .tabela-compromissos th:nth-child(4) { width: 150px; }  /* Grupo */
+        /* Antes eram 100px para o botão com texto; agora cabe só o lápis. */
+        .tabela-compromissos th:nth-child(5) { width: 70px; }
+    }
+
+    /* ========== MOBILE: < 768px ==========
+       No celular as cinco colunas não cabem: as quatro de largura fixa somam
+       470px e sobra uma tira estreita para a descrição, que é justamente o
+       conteúdo. Aqui a linha é remontada em grid — os metadados ficam em uma
+       faixa e a descrição desce para outra, de ponta a ponta. O markup é o
+       mesmo do desktop; só a posição das células muda. */
+    @media (max-width: 767.98px) {
+
+        /* --- Filtros: layout vertical ---
+           Mesmo tratamento do notas.html, que tem esta barra idêntica: sem
+           isto os dois seletores de 200px e o botão disputam a largura e
+           quebram em posições diferentes. --- */
+        .filter-bar {
+            flex-direction: column;
+            align-items: stretch !important;
+        }
+        .filter-bar .d-flex.align-items-center.gap-2 {
+            width: 100%;
+        }
+        /* "Grupo:" e "Usuário:" têm larguras diferentes; sem uma largura
+           comum os dois seletores terminam juntos mas começam desalinhados. */
+        .filter-bar .form-label {
+            min-width: 4.5rem;
+        }
+        .filter-bar .form-select-sm {
+            min-width: 0;
+            width: 100%;
+        }
+        .filter-bar .btn-success {
+            width: 100%;
+        }
+
+        /* --- Vira bloco para o grid do <tr> valer ---
+           Sem isto o <tbody> continua sendo table-row-group e o posicionamento
+           das células passa a depender do navegador. */
+        .tabela-compromissos,
+        .tabela-compromissos thead,
+        .tabela-compromissos tbody {
+            display: block;
+        }
+
+        /* --- Cabeçalho e linhas compartilham as mesmas colunas ---
+           É o que mantém "Data / Dono / Grupo / Editar" alinhado com os
+           valores logo abaixo. Mexer aqui desalinha os dois de uma vez.
+
+           As quatro larguras são fixas de propósito: thead e tbody são grids
+           separados, então uma coluna "auto" seria medida em cada um pelo seu
+           próprio conteúdo ("Dono" contra o nome do usuário) e as duas
+           deixariam de coincidir. A última precisa caber a palavra "Editar",
+           que é mais larga que o lápis embaixo dela. */
+        .tabela-compromissos thead tr,
+        .tabela-compromissos tbody tr {
+            display: grid;
+            grid-template-columns: 4rem 4.5rem 1fr 3.25rem;
+            column-gap: 0.5rem;
+            align-items: center;
+        }
+
+        /* Rótulos menores para as quatro colunas caberem sem espremer. */
+        .tabela-compromissos thead th {
+            font-size: 0.8rem;
+        }
+
+        /* --- A descrição ocupa uma segunda faixa, na largura toda --- */
+        .tabela-compromissos tbody tr {
+            grid-template-areas:
+                "data dono grupo acao"
+                "desc desc desc  desc";
+            padding: 0.5rem 0;
+            border-bottom: 1px solid #dee2e6;
+        }
+
+        .tabela-compromissos tbody td:nth-child(1) { grid-area: data; }
+        .tabela-compromissos tbody td:nth-child(2) { grid-area: desc; }
+        .tabela-compromissos tbody td:nth-child(3) { grid-area: dono; }
+        .tabela-compromissos tbody td:nth-child(4) { grid-area: grupo; }
+        .tabela-compromissos tbody td:nth-child(5) { grid-area: acao; }
+
+        /* Sem valores embaixo para rotular, o cabeçalho da descrição só
+           roubaria largura das outras quatro colunas. */
+        .tabela-compromissos thead th:nth-child(2) {
+            display: none;
+        }
+
+        /* --- Divisória é do <tr>, não de cada célula ---
+           O Bootstrap põe border-bottom em toda célula
+           (.table > :not(caption) > * > *); mantidas, virariam vários traços
+           soltos no meio da linha remontada. */
+        .tabela-compromissos thead th,
+        .tabela-compromissos tbody td {
+            border-bottom-width: 0;
+            padding: 0.1rem 0;
+        }
+
+        .tabela-compromissos thead tr {
+            border-bottom: 2px solid #dee2e6;
+            padding-bottom: 0.4rem;
+        }
+
+        /* --- Realce do hover na linha inteira ---
+           O .table-hover pinta o realce célula a célula, com box-shadow inset
+           em "> tbody > tr:hover > *". Na linha remontada em grid isso sai
+           esburacado: as folgas entre colunas, o padding do <tr> e o espaço
+           acima e abaixo das células mais baixas ficam sem pintar. Aqui o
+           realce vira fundo do próprio <tr>, que cobre tudo de uma vez. */
+        .tabela-compromissos.table-hover > tbody > tr:hover {
+            background-color: var(--bs-table-hover-bg, rgba(0, 0, 0, 0.075));
+        }
+        /* Toda célula pinta background-color: var(--bs-table-bg), que no
+           .table é o branco do corpo. Sem zerar isto, as células cobrem de
+           branco o fundo do <tr> e o realce sai em faixas. Vale também para a
+           data, que aqui tem fundo próprio e viraria uma mancha clara. */
+        .tabela-compromissos.table-hover > tbody > tr:hover > * {
+            box-shadow: none;
+            --bs-table-bg: transparent;
+        }
+
+        /* --- Data com o mesmo fundo do cabeçalho (só no mobile) ---
+           Mesmo tom do .table-light aplicado ao <thead>. Vai na variável do
+           Bootstrap, e não em background-color direto, porque o .table-hover
+           pinta o realce da linha por cima via box-shadow — mexendo na
+           variável, a data acompanha o realce em vez de virar uma mancha fixa.
+
+           A folga é própria porque aqui a célula tem a altura do conteúdo
+           (align-items: center), e sem ela o fundo fica colado no texto. */
+        .tabela-compromissos tbody td:nth-child(1) {
+            --bs-table-bg: var(--bs-light, #f8f9fa);
+            padding: 0.2rem 0.35rem;
+            border-radius: 0.25rem;
+            text-align: center;
+        }
+
+        /* --- Descrição: quebra por palavra e um respiro acima --- */
+        .tabela-compromissos tbody td:nth-child(2) {
+            white-space: normal;
+            word-break: break-word;
+            padding-top: 0.35rem;
+        }
+
+        /* --- Dono e grupo cedem o destaque para data e descrição --- */
+        .tabela-compromissos tbody td:nth-child(3),
+        .tabela-compromissos tbody td:nth-child(4) {
+            font-size: 0.875rem;
+        }
+
+    }
+</style>
+
 <!-- Modal Novo Compromisso -->
 <div class="modal fade" id="taskModal" tabindex="-1" aria-labelledby="taskModalLabel" aria-hidden="true">
     <div class="modal-dialog">
@@ -41,12 +240,12 @@
 
 <!-- Filtros e Botão Nova Tarefa -->
 {% if user_groups %}
-<div class="d-flex flex-wrap gap-2 align-items-center mb-4 p-3 bg-light rounded">
+<div class="filter-bar d-flex flex-wrap gap-2 align-items-center mb-4 p-3 bg-light rounded">
     <!-- Filtro de Grupo -->
     {% if user_groups|length > 1 %}
     <div class="d-flex align-items-center gap-2">
         <label for="group_filter" class="form-label mb-0 text-nowrap">Grupo:</label>
-        <select id="group_filter" class="form-select form-select-sm" onchange="applyFilters()" style="min-width: 200px;">
+        <select id="group_filter" class="form-select form-select-sm" onchange="applyFilters()">
             <option value="">Todos os grupos</option>
             {% for group in user_groups %}
             <option value="{{ group.id }}" {% if selected_group_id == group.id %}selected{% endif %}>
@@ -61,7 +260,7 @@
     {% if members_list|length > 1 %}
     <div class="d-flex align-items-center gap-2">
         <label for="user_filter" class="form-label mb-0 text-nowrap">Usuário:</label>
-        <select id="user_filter" class="form-select form-select-sm" onchange="applyFilters()" style="min-width: 200px;">
+        <select id="user_filter" class="form-select form-select-sm" onchange="applyFilters()">
             <option value="">Todos os usuários</option>
             {% for member_id, member_name in members_list %}
             <option value="{{ member_id }}" {% if selected_user_id == member_id %}selected{% endif %}>
@@ -98,22 +297,26 @@
                 <span class="badge bg-secondary">{{ grupo.tarefas|length }}</span>
             </h5>
             <div class="table-responsive">
-                <table class="table table-hover align-middle">
+                <table class="table table-hover align-middle tabela-compromissos">
                     <thead class="table-light">
                         <tr>
-                            <th style="width: 100px;">Data</th>
+                            <th>Data</th>
                             <th>Descrição</th>
-                            <th style="width: 150px;">Grupo</th>
-                            <th style="width: 120px;">Criado por</th>
-                            <th style="width: 100px;">Ações</th>
+                            <th>Dono</th>
+                            <th>Grupo</th>
+                            <th>Editar</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for tarefa in grupo.tarefas %}
                         <tr>
-                            <td>{{ tarefa.data.strftime('%d/%m/%Y') }}</td>
+                            <td>
+                                {# No celular o mês e o ano já estão no título do bloco
+                                   ("Agosto de 2026"), então repeti-los só gasta largura. #}
+                                <span class="d-none d-md-inline">{{ tarefa.data.strftime('%d/%m/%Y') }}</span>
+                                <span class="d-md-none">{{ tarefa.data.strftime('%d/%m') }}</span>
+                            </td>
                             <td>{{ tarefa.descricao }}</td>
-                            <td>{{ tarefa.task_group.name }}</td>
                             <td>
                                 {% if tarefa.user_id == current_user.id %}
                                 <strong>Você</strong>
@@ -121,8 +324,16 @@
                                 {{ tarefa.usuario.username }}
                                 {% endif %}
                             </td>
+                            <td>{{ tarefa.task_group.name }}</td>
                             <td>
-                                <a href="{{ url_for('editar', id=tarefa.id) }}" class="btn btn-sm btn-outline-primary">Editar</a>
+                                {# Só o lápis, nas duas larguras. Sem texto no botão, o nome
+                                   acessível vem do aria-label e o title dá a dica ao passar
+                                   o mouse — senão o link ficaria sem rótulo algum. #}
+                                <a href="{{ url_for('editar', id=tarefa.id) }}"
+                                   class="btn btn-sm btn-outline-primary botao-editar"
+                                   title="Editar" aria-label="Editar">
+                                    {{ render_icon('pencil-fill') }}
+                                </a>
                             </td>
                         </tr>
                         {% endfor %}
